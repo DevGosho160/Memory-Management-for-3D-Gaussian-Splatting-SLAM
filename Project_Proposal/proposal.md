@@ -1,19 +1,19 @@
 # Eviction-Based Memory Management for 3D Gaussian Splatting SLAM
 
 ## Team and Responsibilities
-Devon Goshorn '\n'
-Experience with Robotic Systems and Computer Vision System Development \n
-Infrastructure/Systems Development - Developing an existing 3DGS SLAM pipeline, MonoGS, to include a VRAM limit and an eviction queue that implements a selected pruning heuristic \n
+Devon Goshorn <br>
+Experience with Robotic Systems and Computer Vision System Development <br>
+Infrastructure/Systems Development - Developing an existing 3DGS SLAM pipeline, MonoGS, to include a VRAM limit and an eviction queue that implements a selected pruning heuristic <br>
 
-Phillip Li \n
-Algorithmic Design - Developing custom pruning heuristics to achieve the best metrics for a given VRAM budget \n
+Phillip Li <br>
+Algorithmic Design - Developing custom pruning heuristics to achieve the best metrics for a given VRAM budget <br>
 
 ## Problem and Motivation
-3DGS SLAM maps grow continuously, causing OOM crashes on hardware with limited memory and power. This causes issues for autonomous, real-time robotics and mobile systems that have these limitations. \n
+3DGS SLAM maps grow continuously, causing OOM crashes on hardware with limited memory and power. This causes issues for autonomous, real-time robotics and mobile systems that have these limitations. <br>
 
 ## Research Questions and Hypotheses
-RQ1: What pruning heuristic, and heuristic application, produces the lowest trajectory error when using a limited memory budget? \n
-H1: A combination of computationally expensive pruning heuristics applied sparsely (e.g. every 100 frames, on loop closure), and computationally cheap heuristics applied more liberally will provide the lowest trajectory error for a given memory budget. \n
+RQ1: What pruning heuristic, and heuristic application, produces the lowest trajectory error when using a limited memory budget? <br>
+H1: A combination of computationally expensive pruning heuristics applied sparsely (e.g. every 100 frames, on loop closure), and computationally cheap heuristics applied more liberally will provide the lowest trajectory error for a given memory budget. <br>
 
 ## Related Work
 
