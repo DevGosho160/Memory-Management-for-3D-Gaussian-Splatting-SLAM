@@ -1,7 +1,7 @@
 # Eviction-Based Memory Management for 3D Gaussian Splatting SLAM
 
 ## Team and Responsibilities
-Devon Goshorn \n
+Devon Goshorn '\n'
 Experience with Robotic Systems and Computer Vision System Development \n
 Infrastructure/Systems Development - Developing an existing 3DGS SLAM pipeline, MonoGS, to include a VRAM limit and an eviction queue that implements a selected pruning heuristic \n
 
