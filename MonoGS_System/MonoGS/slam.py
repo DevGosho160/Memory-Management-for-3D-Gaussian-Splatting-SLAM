@@ -21,9 +21,14 @@ from utils.multiprocessing_utils import FakeQueue
 from utils.slam_backend import BackEnd
 from utils.slam_frontend import FrontEnd
 
+from project_utils.memory_limit import set_memory_limit
+
 
 class SLAM:
-    def __init__(self, config, save_dir=None):
+    def __init__(self, config, save_dir=None, gpu_limit_mem=64.0, cpu_limit_mem=64.0):
+        
+        set_memory_limit(gpu_limit_mem, cpu_limit_mem)
+
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
 
