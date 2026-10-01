@@ -14,6 +14,9 @@ datasets
 wandb
 
 result*
+.venv/
+.cuda/
+.toolchain/
 
 # Windows compiled extensions and build artifacts
 *.pyd
@@ -21,4 +24,3 @@ result*
 *.lib
 *.exp
 *.dll
-

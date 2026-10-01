@@ -1,6 +1,7 @@
 import random
 import time
 
+import numpy as np
 import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
@@ -10,6 +11,7 @@ from gaussian_splatting.utils.loss_utils import l1_loss, ssim
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
+from utils.run_telemetry import RunTelemetry
 from utils.slam_utils import get_loss_mapping
 
 
@@ -37,6 +39,17 @@ class BackEnd(mp.Process):
         self.current_window = []
         self.initialized = not self.monocular
         self.keyframe_optimizers = None
+        self.telemetry = None
+        self.frame_idx = None
+
+    def record_telemetry(self, event, **kwargs):
+        if self.telemetry is not None:
+            self.telemetry.record(
+                event, self.gaussians, frame_idx=self.frame_idx,
+                iteration=self.iteration_count,
+                retained_keyframes=len(self.viewpoints),
+                window_keyframes=len(self.current_window), **kwargs
+            )
 
     def set_hyperparams(self):
         self.save_results = self.config["Results"]["save_results"]
@@ -65,9 +78,12 @@ class BackEnd(mp.Process):
         )
 
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
+        before = self.gaussians.get_xyz.shape[0]
         self.gaussians.extend_from_pcd_seq(
             viewpoint, kf_id=frame_idx, init=init, scale=scale, depthmap=depth_map
         )
+        self.record_telemetry("keyframe_insert", count_before=before,
+                              count_after=self.gaussians.get_xyz.shape[0])
 
     def reset(self):
         self.iteration_count = 0
@@ -85,6 +101,7 @@ class BackEnd(mp.Process):
 
     def initialize_map(self, cur_frame_idx, viewpoint):
         for mapping_iteration in range(self.init_itr_num):
+            iteration_start = time.perf_counter()
             self.iteration_count += 1
             render_pkg = render(
                 viewpoint, self.gaussians, self.pipeline_params, self.background
@@ -120,12 +137,16 @@ class BackEnd(mp.Process):
                     viewspace_point_tensor, visibility_filter
                 )
                 if mapping_iteration % self.init_gaussian_update == 0:
+                    before = self.gaussians.get_xyz.shape[0]
                     self.gaussians.densify_and_prune(
                         self.opt_params.densify_grad_threshold,
                         self.init_gaussian_th,
                         self.init_gaussian_extent,
                         None,
                     )
+                    self.record_telemetry("upstream_init_densify_prune",
+                                          count_before=before,
+                                          count_after=self.gaussians.get_xyz.shape[0])
 
                 if self.iteration_count == self.init_gaussian_reset or (
                     self.iteration_count == self.opt_params.densify_from_iter
@@ -134,6 +155,9 @@ class BackEnd(mp.Process):
 
                 self.gaussians.optimizer.step()
                 self.gaussians.optimizer.zero_grad(set_to_none=True)
+
+            self.record_telemetry("initialize_iteration",
+                                  mapping_enqueue_ms=(time.perf_counter() - iteration_start) * 1000)
 
         self.occ_aware_visibility[cur_frame_idx] = (n_touched > 0).long()
         Log("Initialized map")
@@ -154,6 +178,7 @@ class BackEnd(mp.Process):
             random_viewpoint_stack.append(viewpoint)
 
         for _ in range(iters):
+            iteration_start = time.perf_counter()
             self.iteration_count += 1
             self.last_sent += 1
 
@@ -262,7 +287,11 @@ class BackEnd(mp.Process):
                                 self.gaussians.n_obs <= prune_coviz, mask
                             )
                         if to_prune is not None and self.monocular:
+                            before = self.gaussians.get_xyz.shape[0]
                             self.gaussians.prune_points(to_prune.cuda())
+                            self.record_telemetry("upstream_coviz_prune",
+                                                  count_before=before,
+                                                  count_after=self.gaussians.get_xyz.shape[0])
                             for idx in range((len(current_window))):
                                 current_idx = current_window[idx]
                                 self.occ_aware_visibility[current_idx] = (
@@ -272,6 +301,8 @@ class BackEnd(mp.Process):
                             self.initialized = True
                             Log("Initialized SLAM")
                         # # make sure we don't split the gaussians, break here.
+                    self.record_telemetry("map_prune_iteration",
+                                          mapping_enqueue_ms=(time.perf_counter() - iteration_start) * 1000)
                     return False
 
                 for idx in range(len(viewspace_point_tensor_acm)):
@@ -288,12 +319,16 @@ class BackEnd(mp.Process):
                     == self.gaussian_update_offset
                 )
                 if update_gaussian:
+                    before = self.gaussians.get_xyz.shape[0]
                     self.gaussians.densify_and_prune(
                         self.opt_params.densify_grad_threshold,
                         self.gaussian_th,
                         self.gaussian_extent,
                         self.size_threshold,
                     )
+                    self.record_telemetry("upstream_map_densify_prune",
+                                          count_before=before,
+                                          count_after=self.gaussians.get_xyz.shape[0])
                     gaussian_split = True
 
                 ## Opacity reset
@@ -315,6 +350,8 @@ class BackEnd(mp.Process):
                     if viewpoint.uid == 0:
                         continue
                     update_pose(viewpoint)
+            self.record_telemetry("map_iteration",
+                                  mapping_enqueue_ms=(time.perf_counter() - iteration_start) * 1000)
         return gaussian_split
 
     def color_refinement(self):
@@ -353,6 +390,7 @@ class BackEnd(mp.Process):
         Log("Map refinement done")
 
     def push_to_frontend(self, tag=None):
+        self.record_telemetry("sync_begin")
         self.last_sent = 0
         keyframes = []
         for kf_idx in self.current_window:
@@ -363,8 +401,16 @@ class BackEnd(mp.Process):
 
         msg = [tag, clone_obj(self.gaussians), self.occ_aware_visibility, keyframes]
         self.frontend_queue.put(msg)
+        self.record_telemetry("sync_enqueued")
 
     def run(self):
+        seed = self.config.get("Experiment", {}).get("seed")
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+        self.telemetry = RunTelemetry(self.config["Results"].get("save_dir"), "backend")
+        self.record_telemetry("backend_start")
         while True:
             if self.backend_queue.empty():
                 if self.pause:
@@ -394,6 +440,7 @@ class BackEnd(mp.Process):
                     self.push_to_frontend()
                 elif data[0] == "init":
                     cur_frame_idx = data[1]
+                    self.frame_idx = cur_frame_idx
                     viewpoint = data[2]
                     depth_map = data[3]
                     Log("Resetting the system")
@@ -408,6 +455,7 @@ class BackEnd(mp.Process):
 
                 elif data[0] == "keyframe":
                     cur_frame_idx = data[1]
+                    self.frame_idx = cur_frame_idx
                     viewpoint = data[2]
                     current_window = data[3]
                     depth_map = data[4]
@@ -479,4 +527,6 @@ class BackEnd(mp.Process):
             self.backend_queue.get()
         while not self.frontend_queue.empty():
             self.frontend_queue.get()
+        self.record_telemetry("backend_stop")
+        self.telemetry.close()
         return

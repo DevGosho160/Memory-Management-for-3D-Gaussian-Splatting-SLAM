@@ -1,0 +1,60 @@
+# Codex handoff
+
+Date: 2026-09-30. Audited source: `ae8fce4` on main, matching live origin HEAD. One-time research audit complete; only documentation added. No algorithm changes, installs, training, dataset downloads, commits or pushes.
+
+## Confirmed state
+
+- MonoGS core matches upstream `6c9254c`; Devon imported it at `5c2de7a` and reports running on RTX 5060 Ti, but no run artifacts here.
+- `ae8fce4` adds parent-process memory-limit call and unused pruning helpers. No proactive budget controller, queue, score policy, memory logging, sweep runner or reversible offload.
+- Existing upstream opacity/size pruning executes; window covisibility deletion is monocular-only. n_obs means current-window visibility, unique_kfIDs means origin keyframe.
+- Proposal assigns Devon infrastructure and Phillip heuristics/ablations/evaluation; confirm current agreement before duplicating helpers.
+- Jetson AGX Orin is explicit in original PDF/presentation; revised proposal omits it. Current target/access unresolved.
+
+## Current task / decisions
+
+Prepare reproducible no-budget reference and passive telemetry before policy novelty. No-budget retains ordinary MonoGS pruning. Recommend Replica office0_sp first; it still has two processes. Do not implement learned policy, CPU/disk hierarchy or loop-closure integration by assumption.
+
+## Relevant files / blockers
+
+- Executable root `MonoGS_System/MonoGS`; start with slam.py, utils/slam_backend.py, utils/slam_frontend.py, gaussian_splatting/scene/gaussian_model.py, project_utils/*, utils/eval_utils.py, configs/rgbd/replica/office0_sp.yaml.
+- No dataset/results/environment found at obvious configured paths; system Python3 lacks Torch. WSL GPU is RTX 5070 12,227 MiB; environment/extension compatibility unverified.
+- Default memory limits are 64 GiB; CLI/YAML do not expose them. GPU limit is parent per-process allocator setting; Linux CPU limit is RLIMIT_AS, not RSS. Need budget scope, child setup and transient headroom.
+- Density helper .cuda() on NumPy fails (isolated reproduction); voxel helper is stub; masked renderer unpack mismatch; keep unused paths untouched until separately integrating/testing.
+- --eval forces W&B and 26,000 post-run refinement iterations; avoid for smoke. Online rendering is before_opt; FPS includes throttling/waits. Seeding helper exists but is never called.
+- New literature overlap: Pocket-SLAM contribution + tile budgets. Novelty remains unproven; see RESEARCH_PLAN.md.
+
+## Next three actions
+
+1. Ask Devon: “Can you share your successful run's command, resolved config, MonoGS revision, environment/build versions, dataset path and logs/ATE/rendering outputs? Are you still owning budget/queue/instrumentation/runner, and should I extend map_pruning.py? Does eviction mean permanent deletion or offload/reload, and is AGX Orin still required/available?”
+2. Recover/validate that environment and dataset; record a local run manifest and reproduce an unbounded headless Replica office0_sp smoke run with existing maintenance. No --eval/refinement; explicitly disable custom limits. If original validated sequence is different, recover it first.
+3. Add passive per-process Gaussian/memory/peak/timing logs around initialization, insertion, mapping, densification and sync; repeat full office0 reference, preserving online ATE/rendering and completion status. Capture CPU retained-keyframe growth and simultaneous GPU observation. Implement no policy yet.
+
+Validation completed in audit: AST parsing 32 Python files; config inheritance/scheduling/path inspection; Git blob provenance comparison; stubbed limiter checks; isolated NumPy density failure. No CUDA SLAM execution or baseline metrics obtained.
+
+## 2026-09-30 implementation milestone: branch, data, and telemetry (in progress)
+
+- Revision: working branch `phillip/pruning-baseline` from `ae8fce4`; no commit or push. Pre-existing untracked `AGENTS.md` and `docs/` preserved.
+- CONFIRMED: the public NICE-SLAM Replica archive is reachable. `scripts/prepare_replica_office0_slice.py` extracted frames 0–99 of office0, RGB and depth, plus the original trajectory into ignored `datasets/replica/office0_slice100/`; `slice_manifest.json` records source and SHA-256 hashes. This is a declared 100-frame slice, not a full-office0 result. `configs/rgbd/replica/office0_slice100_sp.yaml` selects it.
+- Code changes in progress: `utils/run_telemetry.py` writes per-process CUDA allocated/reserved/cumulative peaks, Gaussian count, keyframe counts, iteration, event and CPU enqueue time. Backend records insertion, initialization, mapping, upstream densify/prune, covisibility prune and synchronization. Frontend records frame and completion. `slam.py` adds seeded runs, online-only rendering evaluation without the existing 26,000-iteration color refinement, a run manifest, completion marker and online summary. Default `--eval` retains refinement.
+- Validation: Python `compileall` passed for edited files. **No MonoGS run or baseline metrics yet.** Local system lacked Torch, CUDA extensions, C++ compiler and development headers; an ignored `.venv`/`.toolchain` was assembled from existing Torch 2.12.1+cu132 and local packages. Open3D, torchmetrics and W&B now import with local library path. Compiling simple-knn is in progress; the rasterizer is not yet built.
+- Decision: first comparable result will use the 100-frame slice and the same resolved config/seed for existing MonoGS and an additional opacity-pruning variant. The complete office0 scene remains a later validation. The user explicitly authorized downloading public data and directed implementation here, superseding earlier suggestion to defer infrastructure ownership clarification.
+
+Next three actions:
+
+1. Complete both CUDA extension builds; run application import and a headless online baseline smoke, correcting only environment/config/runtime failures.
+2. Run the full 100-frame slice with upstream MonoGS and capture completion, ATE, online rendering, Gaussian/CUDA traces and runtime.
+3. Then integrate the simplest opacity helper through `GaussianModel.prune_points`, preserve visibility alignment and compare the same slice/config/seed. Do not implement voxel, learned or reversible policies.
+
+### Environment validation and baseline launch update
+
+- CONFIRMED: both `simple-knn` and `diff-gaussian-rasterization` built locally for RTX 5070 (sm_120), and `simple_knn._C.distCUDA2` ran on CUDA. A full `slam` import and Replica parser check returned 100 frames. Two minimal vendor compatibility fixes were needed for CUDA 13.4/C++20: removed an unused scalar `lerp` overload that collides with `std::lerp`, and included `<cstdint>` for integer types.
+- CONFIRMED blocker: launched `slam.py --config configs/rgbd/replica/office0_slice100_sp.yaml --online-eval --seed 0 --no-memory-limits` twice. Both failed **before mapping** while unpickling the initial CUDA tensor in the spawned backend with `CUDA error: invalid resource handle`; a standalone 10-element CUDA tensor `torch.multiprocessing` spawn test reproduced it. Removing the 13.4 library path did not help. `cudaMallocAsync` allocator cannot share IPC handles; expandable-segments allocator failed with `pidfd_getfd: Operation not permitted`. These observations support a WSL CUDA IPC limitation, not a MonoGS algorithm failure. Failed run directories: `results/replica_office0_slice100/2026-09-30-18-29-51` and `2026-09-30-18-30-34`; both have `completion.json` marked failed. No ATE, rendering or complete Gaussian trace exists yet.
+- OPEN QUESTION sent to user: allow a clearly labeled local communication workaround, which changes transfer/runtime/memory accounting, or retain standard two-process baseline and move execution to a compatible environment. Do not present a workaround as upstream memory behavior.
+- CONFIRMED independent smoke: a one-iteration, in-process first-frame Replica office0 initialization using the existing `GaussianModel`, `BackEnd.add_next_kf`, CUDA rasterizer, backward/optimizer, and upstream `densify_and_prune` completed. Gaussian rows: 25,461 inserted, 25,677 after initialization; PyTorch CUDA peak allocated 128,137,216 bytes. This is a kernel/runtime smoke only, **not** an online baseline trace or a representative memory result. The exact script/log are ignored local files `.venv/smoke_init.py` and `.venv/smoke-init.log`.
+- Validation after telemetry edits: `compileall`, `git diff --check`, and a CSV writer smoke passed. Frontend now reports a dead backend instead of waiting indefinitely, and SLAM cleans up its queues on that failure path.
+
+Next three actions now:
+
+1. Resolve the CUDA IPC execution choice; retain the exact two-process architecture if a compatible runtime/host is available.
+2. Complete one upstream-behavior office0 slice run and summarize its trace/metrics before adding optional pruning.
+3. Add safe opacity pruning through `GaussianModel.prune_points` and repeat the same configuration/seed, then compare completion, ATE, online rendering, counts and CUDA memory.
