@@ -65,9 +65,11 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False):
     return ape_stat
 
 
-def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False):
+def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False,
+             pose_ids=None, label_override=None):
     trj_data = dict()
-    latest_frame_idx = kf_ids[-1] + 2 if final else kf_ids[-1] + 1
+    selected_ids = kf_ids if pose_ids is None else pose_ids
+    latest_frame_idx = selected_ids[-1] + 2 if final else selected_ids[-1] + 1
     trj_id, trj_est, trj_gt = [], [], []
     trj_est_np, trj_gt_np = [], []
 
@@ -77,7 +79,7 @@ def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False)
         pose[0:3, 3] = T.cpu().numpy()
         return pose
 
-    for kf_id in kf_ids:
+    for kf_id in selected_ids:
         kf = frames[kf_id]
         pose_est = np.linalg.inv(gen_pose_matrix(kf.R, kf.T))
         pose_gt = np.linalg.inv(gen_pose_matrix(kf.R_gt, kf.T_gt))
@@ -96,7 +98,7 @@ def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False)
     plot_dir = os.path.join(save_dir, "plot")
     mkdir_p(plot_dir)
 
-    label_evo = "final" if final else "{:04}".format(iterations)
+    label_evo = label_override or ("final" if final else "{:04}".format(iterations))
     with open(
         os.path.join(plot_dir, f"trj_{label_evo}.json"), "w", encoding="utf-8"
     ) as f:
@@ -122,6 +124,7 @@ def eval_rendering(
     background,
     kf_indices,
     iteration="final",
+    rendering_ids=None,
 ):
     interval = 5
     img_pred, img_gt, saved_frame_idx = [], [], []
@@ -130,9 +133,12 @@ def eval_rendering(
     cal_lpips = LearnedPerceptualImagePatchSimilarity(
         net_type="alex", normalize=True
     ).to("cuda")
-    for idx in range(0, end_idx, interval):
-        if idx in kf_indices:
+    candidate_ids = range(0, end_idx, interval) if rendering_ids is None else rendering_ids
+    for idx in candidate_ids:
+        if rendering_ids is None and idx in kf_indices:
             continue
+        if idx not in frames:
+            raise ValueError(f"Fixed rendering frame {idx} is missing")
         saved_frame_idx.append(idx)
         frame = frames[idx]
         gt_image, _, _ = dataset[idx]
@@ -163,6 +169,7 @@ def eval_rendering(
     output["mean_psnr"] = float(np.mean(psnr_array))
     output["mean_ssim"] = float(np.mean(ssim_array))
     output["mean_lpips"] = float(np.mean(lpips_array))
+    output["view_ids"] = saved_frame_idx
 
     Log(
         f'mean psnr: {output["mean_psnr"]}, ssim: {output["mean_ssim"]}, lpips: {output["mean_lpips"]}',

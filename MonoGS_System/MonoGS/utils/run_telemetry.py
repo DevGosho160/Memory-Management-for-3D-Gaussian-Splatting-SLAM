@@ -13,6 +13,8 @@ FIELDS = (
     "cuda_allocated_bytes", "cuda_reserved_bytes",
     "cuda_peak_allocated_bytes", "cuda_peak_reserved_bytes",
     "mapping_enqueue_ms", "count_before", "count_after",
+    "attempted_growth", "admitted_growth", "rejected_growth",
+    "protected_rows", "policy_wall_ms", "row_ceiling", "row_violation",
 )
 
 
@@ -27,7 +29,7 @@ class RunTelemetry:
 
     def record(self, event, gaussians, frame_idx=None, iteration=None,
                retained_keyframes=None, window_keyframes=None,
-               mapping_enqueue_ms=None, count_before=None, count_after=None):
+               mapping_enqueue_ms=None, count_before=None, count_after=None, **extra):
         if self.file is None:
             return
         row = dict.fromkeys(FIELDS, "")
@@ -44,6 +46,7 @@ class RunTelemetry:
             mapping_enqueue_ms=mapping_enqueue_ms,
             count_before=count_before, count_after=count_after,
         )
+        row.update({key: value for key, value in extra.items() if key in FIELDS})
         self.writer.writerow(row)
 
     def close(self):

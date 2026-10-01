@@ -1,11 +1,15 @@
 import random
 import time
+import json
+import os
 
 import numpy as np
 import open3d as o3d
 import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
+from project_utils.budget_controller import RowBudgetController, BudgetInfeasible
+from project_utils.retention_policy import rank_rows, protected_rows
 
 from project_utils.map_pruning import prune_by_opacity
 from gaussian_splatting.gaussian_renderer import render
@@ -44,9 +48,14 @@ class BackEnd(mp.Process):
         self.keyframe_optimizers = None
         self.telemetry = None
         self.frame_idx = None
+        self.retention = None
+        self.policy_times_ms = []
 
     def record_telemetry(self, event, **kwargs):
         if self.telemetry is not None:
+            if self.retention is not None:
+                kwargs.setdefault("row_ceiling", self.retention.maximum)
+                kwargs.setdefault("row_violation", self.retention.violations)
             self.telemetry.record(
                 event, self.gaussians, frame_idx=self.frame_idx,
                 iteration=self.iteration_count,
@@ -82,12 +91,154 @@ class BackEnd(mp.Process):
         self.opacity_prune_threshold = self.config.get("Experiment", {}).get(
             "opacity_prune_threshold"
         )
+        retention_config = self.config.get("Retention", {})
+        if retention_config.get("enabled", False):
+            if self.opacity_prune_threshold is not None:
+                raise ValueError("Budget retention and extra opacity threshold conflict")
+            if not self.single_thread or not self.config["Training"]["single_thread"]:
+                raise ValueError("V1 retention requires both single-thread scheduling flags")
+            self.retention = RowBudgetController(
+                retention_config["max_gaussians"],
+                retention_config.get("low_watermark_fraction", .95))
+            self.retention_config = retention_config
+
+    def _retention_inputs(self):
+        model = self.gaussians
+        n = model.get_xyz.shape[0]
+        opacity = model.get_opacity.detach().flatten().cpu().numpy()
+        masks = [self.occ_aware_visibility[k].detach().bool().cpu().numpy()
+                 for k in self.current_window
+                 if k in self.occ_aware_visibility and
+                 len(self.occ_aware_visibility[k]) == n]
+        if masks:
+            window_fraction = np.mean(np.stack(masks), axis=0)
+        else:
+            window_fraction = np.zeros(n)
+        meta = model.metadata
+        protected = protected_rows(
+            meta.gaussian_id.numpy(), opacity, model.unique_kfIDs.numpy(),
+            model.get_xyz.detach().cpu().numpy(), masks,
+            meta.tracking_ema.numpy(),
+            cell_m=self.retention_config.get("spatial_cell_m", .5),
+            cell_min=self.retention_config.get("spatial_min_rows", 2),
+            origin_min=self.retention_config.get("origin_min_rows", 64),
+            view_min=self.retention_config.get("window_view_min_rows", 128),
+        ) if self.retention_config.get("protect_support", True) else np.zeros(n, bool)
+        order = rank_rows(
+            self.retention_config["policy"], meta.gaussian_id.numpy(), opacity,
+            meta.last_seen_frame.numpy(), meta.lineage_birth_frame.numpy(),
+            meta.tracking_ema.numpy(), window_fraction, self.frame_idx,
+            meta.probation_until_kf_event.numpy() > meta.kf_event_index,
+            seed=self.config.get("Experiment", {}).get("seed", 0),
+            use_tracking_history=self.retention_config.get("use_tracking_history", True),
+            half_life=self.retention_config.get("visibility_half_life_frames", 20))
+        return order, protected
+
+    def _apply_row_plan(self, plan):
+        if not np.all(plan.keep):
+            keep = torch.from_numpy(plan.keep).to("cuda")
+            self.gaussians.prune_points(~keep)
+            self.occ_aware_visibility = {
+                key: value[keep] for key, value in self.occ_aware_visibility.items()
+                if len(value) == len(keep)}
+        self.retention.observe(self.gaussians.get_xyz.shape[0])
+
+    def _candidate_admission(self, xyz):
+        started = time.perf_counter()
+        count = len(xyz)
+        old = self.gaussians.get_xyz.shape[0]
+        order, protected = self._retention_inputs()
+        plan = self.retention.plan(old, count, order, protected)
+        self._apply_row_plan(plan)
+        admitted = plan.admitted_growth
+        if admitted == count:
+            indices = np.arange(count)
+        else:
+            # Deterministic spatial round-robin; original candidate order breaks ties.
+            cells = np.floor(xyz / self.retention_config.get("spatial_cell_m", .5)).astype(np.int64)
+            groups = {}
+            for i, cell in enumerate(cells):
+                groups.setdefault(tuple(cell), []).append(i)
+            indices = []
+            depth = 0
+            while len(indices) < admitted:
+                for group in groups.values():
+                    if depth < len(group):
+                        indices.append(group[depth])
+                        if len(indices) == admitted:
+                            break
+                depth += 1
+            indices = np.asarray(indices, dtype=np.int64)
+        torch.cuda.synchronize()
+        elapsed = (time.perf_counter() - started) * 1000
+        self.policy_times_ms.append(elapsed)
+        self.record_telemetry("retention_insert_plan", count_before=old,
+                              count_after=self.gaussians.get_xyz.shape[0],
+                              attempted_growth=count, admitted_growth=admitted,
+                              rejected_growth=count-admitted, policy_wall_ms=elapsed,
+                              protected_rows=plan.protected_count)
+        return indices
+
+    def _densify_admission(self, grads, clone_mask, split_mask):
+        started = time.perf_counter()
+        model = self.gaussians
+        n = model.get_xyz.shape[0]
+        ids = model.metadata.gaussian_id.numpy()
+        gradient = grads.detach().flatten().cpu().numpy()
+        clone = clone_mask.detach().cpu().numpy()
+        split = split_mask.detach().cpu().numpy()
+        candidates = [(i, 2 if split[i] else 1) for i in range(n)
+                      if clone[i] or split[i]]
+        candidates.sort(key=lambda item: (-gradient[item[0]], int(ids[item[0]])))
+        gross_cap = max(0, int(self.retention_config.get(
+            "max_densify_gross_fraction", .05) * self.retention.maximum))
+        selected = []
+        gross = 0
+        for index, cost in candidates:
+            if gross + cost > gross_cap:
+                break
+            selected.append((index, cost))
+            gross += cost
+        order, protected = self._retention_inputs()
+        for index, _ in selected:
+            protected[index] = True
+        plan = self.retention.plan(n, gross, order, protected,
+                                   atomic_costs=[cost for _, cost in selected])
+        total_attempted = 2 * int(split.sum()) + int(clone.sum())
+        self.retention.attempted_growth += total_attempted - gross
+        self.retention.rejected_growth += total_attempted - gross
+        accepted = []
+        used = 0
+        for index, cost in selected:
+            if used + cost > plan.admitted_growth:
+                break
+            accepted.append((int(ids[index]), cost))
+            used += cost
+        self._apply_row_plan(plan)
+        torch.cuda.synchronize()
+        elapsed = (time.perf_counter() - started) * 1000
+        self.policy_times_ms.append(elapsed)
+        self.record_telemetry("retention_densify_plan", count_before=n,
+                              count_after=model.get_xyz.shape[0],
+                              attempted_growth=total_attempted,
+                              admitted_growth=used,
+                              rejected_growth=total_attempted-used,
+                              protected_rows=plan.protected_count,
+                              policy_wall_ms=elapsed)
+        return ([value for value, cost in accepted if cost == 1],
+                [value for value, cost in accepted if cost == 2])
 
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
         before = self.gaussians.get_xyz.shape[0]
+        self.gaussians.current_frame = frame_idx
+        if self.retention is not None:
+            self.gaussians.candidate_admission_callback = self._candidate_admission
         self.gaussians.extend_from_pcd_seq(
             viewpoint, kf_id=frame_idx, init=init, scale=scale, depthmap=depth_map
         )
+        self.gaussians.candidate_admission_callback = None
+        if self.retention is not None:
+            self.retention.observe(self.gaussians.get_xyz.shape[0])
         self.record_telemetry("keyframe_insert", count_before=before,
                               count_after=self.gaussians.get_xyz.shape[0])
 
@@ -101,6 +252,9 @@ class BackEnd(mp.Process):
 
         # remove all gaussians
         self.gaussians.prune_points(self.gaussians.unique_kfIDs >= 0)
+        if self.retention is not None:
+            self.gaussians.row_limit = self.retention.maximum
+            self.gaussians.densify_admission_callback = self._densify_admission
         # remove everything from the queues
         while not self.backend_queue.empty():
             self.backend_queue.get()
@@ -405,7 +559,18 @@ class BackEnd(mp.Process):
         if tag is None:
             tag = "sync_backend"
 
-        msg = [tag, clone_obj(self.gaussians), self.occ_aware_visibility, keyframes]
+        # Bound backend callbacks must not enter a frontend snapshot: deepcopy
+        # would recursively capture the process, queues and authentication key.
+        densify_callback = self.gaussians.densify_admission_callback
+        admission_callback = self.gaussians.candidate_admission_callback
+        self.gaussians.densify_admission_callback = None
+        self.gaussians.candidate_admission_callback = None
+        try:
+            snapshot = clone_obj(self.gaussians)
+        finally:
+            self.gaussians.densify_admission_callback = densify_callback
+            self.gaussians.candidate_admission_callback = admission_callback
+        msg = [tag, snapshot, self.occ_aware_visibility, keyframes]
         self.frontend_queue.put(msg)
         self.record_telemetry("sync_enqueued")
 
@@ -474,6 +639,22 @@ class BackEnd(mp.Process):
                     viewpoint = data[2]
                     current_window = data[3]
                     depth_map = data[4]
+                    if self.retention is not None:
+                        feedback_start = time.perf_counter()
+                        block = data[5]
+                        self.gaussians.metadata.apply_feedback(
+                            ids=block["ids"], version=block["version"],
+                            sequence=block["sequence"], frames=block["frames"],
+                            weighted_hits=block["weighted_hits"],
+                            last_seen=block["last_seen"],
+                            beta=2 ** (-1 / self.retention_config.get(
+                                "visibility_half_life_frames", 20)))
+                        feedback_elapsed = (time.perf_counter() - feedback_start) * 1000
+                        self.policy_times_ms.append(feedback_elapsed)
+                        self.record_telemetry("tracking_feedback",
+                                              count_before=self.gaussians.get_xyz.shape[0],
+                                              count_after=self.gaussians.get_xyz.shape[0],
+                                              policy_wall_ms=feedback_elapsed)
 
                     self.viewpoints[cur_frame_idx] = viewpoint
                     self.current_window = current_window
@@ -554,6 +735,8 @@ class BackEnd(mp.Process):
                         self.record_telemetry("extra_opacity_prune", count_before=before,
                                               count_after=after)
                     self.push_to_frontend("keyframe")
+                    if self.retention is not None:
+                        self.gaussians.metadata.kf_event_index += 1
                 else:
                     raise Exception("Unprocessed data", data)
         while not self.backend_queue.empty():
@@ -561,5 +744,25 @@ class BackEnd(mp.Process):
         while not self.frontend_queue.empty():
             self.frontend_queue.get()
         self.record_telemetry("backend_stop")
+        if self.retention is not None and self.config["Results"].get("save_dir"):
+            timings = np.asarray(self.policy_times_ms)
+            with open(os.path.join(self.config["Results"]["save_dir"],
+                                   "retention_summary.json"), "w", encoding="utf-8") as file:
+                json.dump({
+                    "policy": self.retention_config["policy"],
+                    "row_ceiling": self.retention.maximum,
+                    "max_live_rows": max(self.retention.max_observed,
+                                         self.gaussians.max_live_rows),
+                    "final_rows": int(self.gaussians.get_xyz.shape[0]),
+                    "row_violations": self.retention.violations,
+                    "attempted_growth": self.retention.attempted_growth,
+                    "admitted_growth": self.retention.admitted_growth,
+                    "rejected_growth": self.retention.rejected_growth,
+                    "policy_wall_ms_median": (float(np.median(timings)) if len(timings) else 0),
+                    "policy_wall_ms_p95": (float(np.percentile(timings, 95)) if len(timings) else 0),
+                    "policy_wall_ms_total": float(timings.sum()),
+                    "backend_cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+                    "backend_cuda_peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+                }, file, indent=2)
         self.telemetry.close()
         return

@@ -81,3 +81,37 @@ def test_real_model_optimizer_and_metadata_follow_clone_split_prune():
     assert torch.allclose(model.optimizer.state[model._xyz]["exp_avg"][0], before[0])
     assert model.optimizer.state[model._xyz]["step"] == 1
     model.metadata.assert_aligned(model.get_xyz.shape[0])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA model required")
+def test_prepruned_frozen_split_ids_respect_gross_staging_limit():
+    from gaussian_splatting.scene.gaussian_model import GaussianModel
+
+    model = GaussianModel(0)
+    model.init_lr(6.0)
+    model.training_setup(SimpleNamespace(
+        percent_dense=.1, position_lr_init=.001, position_lr_final=.001,
+        position_lr_delay_mult=1., position_lr_max_steps=100,
+        feature_lr=.001, opacity_lr=.001, scaling_lr=.001,
+        rotation_lr=.001))
+    model.extend_from_pcd(
+        torch.tensor([[0., 0., 0.], [1., 0., 0.], [2., 0., 0.]], device="cuda"),
+        torch.zeros((3, 3, 1), device="cuda"),
+        torch.tensor([[-4.] * 3, [-4.] * 3, [0.] * 3], device="cuda"),
+        torch.tensor([[1., 0., 0., 0.]] * 3, device="cuda"),
+        torch.zeros((3, 1), device="cuda"), kf_id=0)
+    model.xyz_gradient_accum[:] = 1
+    model.denom[:] = 1
+    model.row_limit = 5
+
+    def admit(grads, clone, split):
+        assert clone.tolist() == [True, True, False]
+        assert split.tolist() == [False, False, True]
+        model.prune_points(torch.tensor([False, True, False], device="cuda"))
+        return [0], [2]
+
+    model.densify_admission_callback = admit
+    model.densify_and_prune(.5, 0., 1., None)
+    assert model.metadata.gaussian_id.tolist() == [0, 3, 4, 5]
+    assert model.max_live_rows == 5
+    model.metadata.assert_aligned(4)

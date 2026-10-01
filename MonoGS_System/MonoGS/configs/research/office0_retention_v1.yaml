@@ -1,0 +1,18 @@
+inherit_from: configs/rgbd/replica/office0_slice100_sp.yaml
+Retention:
+  enabled: true
+  policy: tracking_support
+  max_gaussians: 40000
+  low_watermark_fraction: 0.95
+  max_densify_gross_fraction: 0.05
+  visibility_half_life_frames: 20
+  utility_weights: [0.50, 0.25, 0.15, 0.10]
+  protect_support: true
+  use_tracking_history: true
+  spatial_cell_m: 0.5
+  spatial_min_rows: 2
+  origin_min_rows: 64
+  window_view_min_rows: 128
+Evaluation:
+  pose_ids: all
+  rendering_ids: [5, 10, 15, 20, 25, 30, 35, 45, 50, 55, 60, 65, 70, 75, 80, 90, 95]

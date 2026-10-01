@@ -146,3 +146,16 @@ Next three actions:
 1. Implement pure deterministic policy rankings, common support protection and row admission planning with focused tests.
 2. Integrate preemptive insertion and gross densification admission into backend/model, preserving the disabled upstream path.
 3. Deliver frontend tracking feedback and fixed-frame evaluation, then run a declared smoke and first constrained comparison.
+
+### 2026-10-01 V1 controller and first 40k pilot
+
+- CONFIRMED implementation: one strict row admission planner now drives opacity, deterministic SplitMix64 random, last-seen/recency and the tracking-support score. Shared view, origin and world-cell protection is selected before ranking. Candidate admission is decided from the sampled CPU point cloud before CUDA upload; densification freezes parent IDs and budgets gross clone/two-child split staging. `GaussianModel` asserts the row ceiling at append. Frontend final-pose tracking hits are aggregated once per camera frame and applied by ID/version at the next keyframe. Fixed all-100-frame ATE and the 17 declared rendering views are available while the default evaluator remains available.
+- CONFIRMED validation: seven focused policy/metadata tests pass, including real CUDA optimizer compaction and pre-pruned clone/split staging; `compileall` and `git diff --check` pass. One full proposed-policy correctness pilot, `results/replica_office0_slice100/2026-10-01-02-36-11/`, completed 100 frames at 40k with maximum staged/live rows 39,968, final rows 32,344 and zero row violations. Its fixed all-frame ATE is 0.0010362998 m; fixed-view PSNR/SSIM/LPIPS are 41.03818/0.9779206/0.0604378; backend peak allocated/reserved are 991,242,240/1,077,936,128 B. CPU-transfer timing and allocator scope limitations remain.
+- LIMITATION: this pilot was launched while subsequent telemetry/manifest and timing edits were still being made, so its manifest records an in-progress working tree. It proves the earlier controller path completed, but is not the frozen-revision comparator result. The first attempt failed at snapshot deepcopy of a bound callback; the second reached frame 63 and exposed a stale-gradient padding bug after pre-pruning. Both were repaired, and the successful third run completed. Their failed artifacts remain in ignored results directories.
+- Decision: the user reduced V1's primary enforced budget to a strict Gaussian row ceiling. CUDA allocated/reserved peaks and timing remain measured diagnostics; no whole-application allocated-byte controller claim is made. Keep CPU transfer opt-in and common across comparisons.
+
+Next three actions:
+
+1. Commit the tested controller/comparator integration, then rerun the fixed-evaluation unbounded reference and four policies at 40k from that one revision.
+2. Verify every run's completion, fixed pose/view IDs, staged maximum, zero row violations, growth counts and CUDA peaks before interpreting quality.
+3. Run the no-T ablation through the same controller, summarize whether tracking history adds value and checkpoint the results locally without pushing.

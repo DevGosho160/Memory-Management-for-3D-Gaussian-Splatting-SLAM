@@ -170,6 +170,10 @@ class SLAM:
                 0,
                 final=True,
                 monocular=self.monocular,
+                pose_ids=(list(range(len(self.dataset))) if
+                          self.config.get("Evaluation", {}).get("pose_ids") == "all" else None),
+                label_override=("fixed_final" if
+                                self.config.get("Evaluation", {}).get("pose_ids") == "all" else None),
             )
 
             rendering_result = eval_rendering(
@@ -181,6 +185,7 @@ class SLAM:
                 self.background,
                 kf_indices=kf_indices,
                 iteration="before_opt",
+                rendering_ids=self.config.get("Evaluation", {}).get("rendering_ids"),
             )
             columns = ["tag", "psnr", "ssim", "lpips", "RMSE ATE", "FPS"]
             metrics_table = wandb.Table(columns=columns)
@@ -273,6 +278,15 @@ if __name__ == "__main__":
         if not 0.0 < args.opacity_prune_threshold < 1.0:
             parser.error("--opacity-prune-threshold must be between 0 and 1")
         config["Experiment"]["opacity_prune_threshold"] = args.opacity_prune_threshold
+    if config.get("Retention", {}).get("enabled", False):
+        if config["Experiment"].get("opacity_prune_threshold") is not None:
+            parser.error("Retention and extra opacity pruning cannot run together")
+        if config["Retention"].get("policy") not in (
+            "opacity", "random", "lru", "tracking_support"
+        ):
+            parser.error("Unknown Retention policy")
+        if config["Retention"].get("max_gaussians", 0) < 1:
+            parser.error("Retention.max_gaussians must be positive")
     save_dir = None
 
     if args.eval:
@@ -320,6 +334,10 @@ if __name__ == "__main__":
                 ).splitlines(),
                 "seed": args.seed,
                 "dataset_path": config["Dataset"]["dataset_path"],
+                "resolved_config_sha256": hashlib.sha256(
+                    yaml.safe_dump(config, sort_keys=True).encode()).hexdigest(),
+                "retention": config.get("Retention"),
+                "evaluation": config.get("Evaluation"),
                 "status": "started",
             }, file, indent=2)
         Log("saving results in " + save_dir)
