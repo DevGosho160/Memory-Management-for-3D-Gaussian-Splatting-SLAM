@@ -1,0 +1,212 @@
+[
+  {
+    "policy": "random",
+    "run_dir": "results/replica_room0_revisit380/2026-10-01-05-09-38",
+    "fixed_ate_overall_m": 0.0011315499254558627,
+    "max_frame_error_m": 0.003367643213863715,
+    "intervals": {
+      "pre_revisit": {
+        "rmse_m": 0.0011566484565733014,
+        "max_error_m": 0.003367643213863715,
+        "mean_error_m": 0.00102447510361225,
+        "frames": 345
+      },
+      "revisit": {
+        "rmse_m": 0.0008039979392640897,
+        "max_error_m": 0.0012333694252131054,
+        "mean_error_m": 0.0007793698633376057,
+        "frames": 26
+      },
+      "post_revisit": {
+        "rmse_m": 0.0009541697395311913,
+        "max_error_m": 0.001133185755056789,
+        "mean_error_m": 0.0009463516630562023,
+        "frames": 9
+      }
+    },
+    "psnr": 34.64078494480678,
+    "ssim": 0.9415587782859802,
+    "lpips": 0.13616569801455453,
+    "row_ceiling": 40000,
+    "max_live_rows": 40000,
+    "row_violations": 0,
+    "final_rows": 31032,
+    "backend_cuda_peak_allocated_bytes": 1687464960,
+    "backend_cuda_peak_reserved_bytes": 1837105152,
+    "policy_wall_ms_total": 4598.332314853906,
+    "frontend_feedback_wall_ms_total": 1070.7824308483396,
+    "online_runtime_s": 1017.582125,
+    "keyframe_count": 57,
+    "mapping_iterations": 9506,
+    "decision_events": 124,
+    "feedback_events": 56,
+    "feedback_apply_ms_total": 123.88841196661815,
+    "pressure_events": 56,
+    "nonzero_T_fraction_at_last_decision": 0.6555263157894737,
+    "T_quantiles_at_last_decision": {
+      "min": 0.0,
+      "p10": 0.0,
+      "p25": 0.0,
+      "median": 0.048948461189866066,
+      "p75": 0.5603337287902832,
+      "p90": 0.9951005399227142,
+      "max": 0.9999979138374329
+    },
+    "correlations_at_last_decision": {
+      "T_W": 0.4403504443129307,
+      "T_R": 0.35550963871368657,
+      "T_O": 0.39291480861457767,
+      "W_R": 0.8084881215967735,
+      "W_O": -0.17114310337688934,
+      "R_O": -0.3561590253793044
+    },
+    "last_decision_origin_effective_count": 20.463577499436813,
+    "last_decision_spatial_effective_cells": 198.95414979773977,
+    "final_spatial_occupied_cells_0_5m": 453,
+    "final_spatial_effective_cells_0_5m": 169.6075589418561,
+    "final_spatial_top10_mass_0_5m": 0.21851637019850476,
+    "attempted_growth": 1016360,
+    "admitted_growth": 858734,
+    "rejected_growth": 157626
+  },
+  {
+    "policy": "tracking_support",
+    "run_dir": "results/replica_room0_revisit380/2026-10-01-05-26-47",
+    "fixed_ate_overall_m": 0.001134355906156437,
+    "max_frame_error_m": 0.004111403346310711,
+    "intervals": {
+      "pre_revisit": {
+        "rmse_m": 0.0011257620761733753,
+        "max_error_m": 0.004111403346310711,
+        "mean_error_m": 0.0008856681935254647,
+        "frames": 345
+      },
+      "revisit": {
+        "rmse_m": 0.0009273584278726789,
+        "max_error_m": 0.0014942102903334564,
+        "mean_error_m": 0.0008869097913202901,
+        "frames": 26
+      },
+      "post_revisit": {
+        "rmse_m": 0.001806710956007743,
+        "max_error_m": 0.0020719616923830257,
+        "mean_error_m": 0.0017943537963745655,
+        "frames": 9
+      }
+    },
+    "psnr": 34.50759996686663,
+    "ssim": 0.9350339202653795,
+    "lpips": 0.15710858149187906,
+    "row_ceiling": 40000,
+    "max_live_rows": 40000,
+    "row_violations": 0,
+    "final_rows": 24243,
+    "backend_cuda_peak_allocated_bytes": 1560334848,
+    "backend_cuda_peak_reserved_bytes": 1681915904,
+    "policy_wall_ms_total": 4171.485966959153,
+    "frontend_feedback_wall_ms_total": 1089.684616017621,
+    "online_runtime_s": 948.9353125,
+    "keyframe_count": 51,
+    "mapping_iterations": 8600,
+    "decision_events": 112,
+    "feedback_events": 50,
+    "feedback_apply_ms_total": 106.74638293858152,
+    "pressure_events": 49,
+    "nonzero_T_fraction_at_last_decision": 0.667620583797284,
+    "T_quantiles_at_last_decision": {
+      "min": 0.0,
+      "p10": 0.0,
+      "p25": 0.0,
+      "median": 0.18718993663787842,
+      "p75": 0.9498069882392883,
+      "p90": 0.9999857544898987,
+      "max": 0.9999979138374329
+    },
+    "correlations_at_last_decision": {
+      "T_W": 0.44614245604041847,
+      "T_R": 0.3349543352557244,
+      "T_O": 0.6147276948823193,
+      "W_R": 0.7994986505749669,
+      "W_O": -0.17246071437291316,
+      "R_O": -0.39039358518577166
+    },
+    "last_decision_origin_effective_count": 14.557229930658728,
+    "last_decision_spatial_effective_cells": 169.45349681525013,
+    "final_spatial_occupied_cells_0_5m": 487,
+    "final_spatial_effective_cells_0_5m": 127.88405493961626,
+    "final_spatial_top10_mass_0_5m": 0.26642742234871925,
+    "attempted_growth": 923206,
+    "admitted_growth": 770215,
+    "rejected_growth": 152991
+  },
+  {
+    "policy": "no-T",
+    "run_dir": "results/replica_room0_revisit380/2026-10-01-05-42-48",
+    "fixed_ate_overall_m": 0.0011916533225992804,
+    "max_frame_error_m": 0.003985655313671234,
+    "intervals": {
+      "pre_revisit": {
+        "rmse_m": 0.0012093084439542636,
+        "max_error_m": 0.003985655313671234,
+        "mean_error_m": 0.001021464843128105,
+        "frames": 345
+      },
+      "revisit": {
+        "rmse_m": 0.0008482941877646686,
+        "max_error_m": 0.0011403253250512793,
+        "mean_error_m": 0.0008385497002337398,
+        "frames": 26
+      },
+      "post_revisit": {
+        "rmse_m": 0.001348552313166502,
+        "max_error_m": 0.001590927552902501,
+        "mean_error_m": 0.0013375890377455265,
+        "frames": 9
+      }
+    },
+    "psnr": 34.65195456005278,
+    "ssim": 0.9395545579138256,
+    "lpips": 0.15448301746731713,
+    "row_ceiling": 40000,
+    "max_live_rows": 40000,
+    "row_violations": 0,
+    "final_rows": 24781,
+    "backend_cuda_peak_allocated_bytes": 1535656960,
+    "backend_cuda_peak_reserved_bytes": 1656750080,
+    "policy_wall_ms_total": 4053.5804159153486,
+    "frontend_feedback_wall_ms_total": 1079.01433990628,
+    "online_runtime_s": 932.321125,
+    "keyframe_count": 50,
+    "mapping_iterations": 8449,
+    "decision_events": 110,
+    "feedback_events": 49,
+    "feedback_apply_ms_total": 104.8112709831912,
+    "pressure_events": 47,
+    "nonzero_T_fraction_at_last_decision": 0.6550700385954495,
+    "T_quantiles_at_last_decision": {
+      "min": 0.0,
+      "p10": 0.0,
+      "p25": 0.0,
+      "median": 0.21703650057315826,
+      "p75": 0.9737192988395691,
+      "p90": 0.9999933838844299,
+      "max": 0.9999979138374329
+    },
+    "correlations_at_last_decision": {
+      "T_W": 0.4102228674005877,
+      "T_R": 0.3052853521021943,
+      "T_O": 0.6390300293187503,
+      "W_R": 0.7236725202885649,
+      "W_O": -0.1353178166600447,
+      "R_O": -0.3864862378819525
+    },
+    "last_decision_origin_effective_count": 17.99371477849867,
+    "last_decision_spatial_effective_cells": 174.81681014738098,
+    "final_spatial_occupied_cells_0_5m": 484,
+    "final_spatial_effective_cells_0_5m": 133.44314949207714,
+    "final_spatial_top10_mass_0_5m": 0.24417900811105284,
+    "attempted_growth": 908574,
+    "admitted_growth": 755427,
+    "rejected_growth": 153147
+  }
+]

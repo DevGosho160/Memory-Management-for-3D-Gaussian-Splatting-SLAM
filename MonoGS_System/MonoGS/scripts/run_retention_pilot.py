@@ -82,6 +82,7 @@ def summarize(run_dir, policy):
         int(row["cuda_peak_reserved_bytes"]) for row in samples)
     if policy != "reference":
         result.update(json.loads((path / "retention_summary.json").read_text()))
+        result["policy"] = policy  # Keep the no-T ablation label after loading backend ranking.
         frontend = next(path.glob("telemetry_frontend_*.csv"))
         with frontend.open(newline="") as file:
             feedback_times = np.asarray([

@@ -203,3 +203,16 @@ Next three actions:
 1. Complete and verify the room0 segment manifest and freeze the three-run configuration at K=40,000.
 2. Run only random, full V1 and no-T on the same contiguous segment with fixed pose/render IDs and inspect completion, telemetry, overhead and budget compliance.
 3. Document pre-return, return and post-return results and causal limits, then make the results checkpoint commit. Stop without V2.
+
+### 2026-10-01 room0 separated-return triplet, final stop
+
+- Run revision `6eda3f3` (`phillip/pruning-baseline`); three complete seed-0 runs at K=40,000: `MonoGS_System/MonoGS/results/replica_room0_revisit380/{2026-10-01-05-09-38,2026-10-01-05-26-47,2026-10-01-05-42-48}/` for random, full V1 and no-T. Local summary: `results/retention_pilot_2026-10-01-05-09-32/`. All use the same 380 hashed source frames, 0–379 fixed pose IDs, 21 fixed rendering IDs, CPU-transfer workaround, support floors, controller, seed and ordinary maintenance. Resolved configs differ only in output directory, ranking and no-T's ranking flag. All have max staged/live rows 40,000 and zero violations. No further SLAM runs were launched.
+- CONFIRMED sequence: room0 frames 70/361 lie 0.174 m and about 6 degrees apart after 1.13 m camera departure; interval analysis pre 0–344, return 345–370, post 371–379. TUM is not available locally. Return ATE random/V1/no-T is 0.804/0.927/0.848 mm; overall 1.132/1.134/1.192 mm. V1 does not win the return. Final 0.5 m effective spatial cells are 169.6/127.9/133.4; keyframes 57/51/50 and cumulative mapping iterations 9,506/8,600/8,449. All other quality, count, process CUDA and event diagnostics are in `docs/RETENTION_ROOM0_REVISIT_2026-10-01.md` and `docs/artifacts/retention_room0_revisit/`.
+- VALIDATION: 14 policy/metadata/planner equality tests passed; same-state old/new CPU median no-pressure planner 280.98/2.72 ms, pressured planner 207.60/3.20 ms and feedback 419.09/1.78 ms. Post-run analysis reconstructed saved ATE within 1e-10 m, checked identical GT/pose/render IDs and complete triplet, and verified all 761 dataset file hashes. The no-T run's summary label was repaired after the old summarizer overrode it with the backend's `tracking_support` ranking name; its saved config verifies `use_tracking_history=false`, and the summarizer is corrected. Run code and source revision were unchanged.
+- DECISION: T has event-time variation, but no independent revisit advantage is established. Initial frame-0 maps differ before budget deletion, and online keyframe/mapping work diverges. CPU transport and backend allocator scope limit memory interpretation. One seed and a nine-frame post-return tail limit generalization. No V2 implementation or design is justified now. This satisfies the requested stop after three runs.
+
+Next three actions, for a future separately authorized session only:
+
+1. Share the measured controller/diagnostic contract and negative/underdetermined triplet with Devon; agree on infrastructure ownership before broader work.
+2. If the research question continues, repeat matched seeds and add same-state selection/future-visibility attribution to isolate T from initial stochastic and keyframe-work divergence.
+3. Revisit any V2 mechanism only after replicated revisit evidence identifies a specific failure mode; preserve the upstream and random comparisons.
