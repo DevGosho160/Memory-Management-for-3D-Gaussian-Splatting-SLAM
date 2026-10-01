@@ -118,3 +118,31 @@ Next three actions:
 1. Keep the first A/B result and scripts on the local branch; reproduce on a CUDA IPC-capable environment to establish ordinary cross-process memory/throughput measurements.
 2. Freeze evaluation viewpoint IDs or report common-keyframe ATE on the saved trajectories before interpreting small ATE changes; repeat the same single policy on a full scene or second seed for robustness.
 3. Decide with Devon how this measured opacity baseline fits the budget/controller work, without treating a Gaussian-count cap as an application-wide GPU-memory budget.
+
+### 2026-10-01 research-design session: first retention method specified
+
+- Design artifact: `docs/RETENTION_METHOD_V1.md`, against clean current revision `df425c85f34561ec4330148d18f9a25c59c39b2e`. No implementation, SLAM experiment, environment change, full repository re-audit or another-machine reproduction performed. This user-authorized algorithm-design session supersedes the preceding next-action suggestion to prioritize reproduction on another machine.
+- CONFIRMED saved-telemetry count decomposition: both final runs inserted 254,584 rows. A initialization adds 1,089 net / B 1,088; ordinary mapping densify/prune removes 200,308 net / B 194,287. B's 6,021 fewer ordinary net deletions offsets nearly all its 6,396 extra removals, giving -376 final rows. Gross clone/split/deletion components and row identities are absent, so more densification versus fewer ordinary deletions remains unresolved; do not assert direct regeneration of specific deleted rows.
+- CONFIRMED peak localization: keyframe 93, ordinary mapping iteration 3490 (A) / 3478 (B), after insertion at iteration 3466 and before upstream densify/prune at 3500, extra B pruning at 3617 and frontend synchronization. Maximum sampled counts are 65,583 / 65,286 at frame 99; no new allocated peak there. Sub-operation attribution inside mapping is unmeasured. Final reserved peak first appears at frame 93 mapping iteration 3468 / 3469.
+- Saved-trajectory analysis only: common 18-keyframe rigid-aligned ATE is A=0.0007549439273923975 m / B=0.0007205770070285981 m. No new SLAM execution. This does not establish policy superiority. The design freezes all-frame pose IDs and the existing 17 shared rendering views in upcoming experiments.
+- PLANNED method: common preemptive admission controller with a strict backend-map row ceiling including gross clone/split staging, separately calibrated/measured backend allocated-byte guard, stable per-row metadata and aggregated frontend tracking feedback. Candidate retention score is 0.50 tracking-hit EMA + 0.25 current-window visibility fraction + 0.15 last-seen recency + 0.10 opacity, with common keyframe/actual-view/coarse-world-cell support floors. Visibility remains a tracking-support proxy, not loss sensitivity or proven future utility.
+- PLANNED bounded matrix: 50k/40k live-row ceilings; opacity/random/LRU/proposed through the same controller; one fixed-evaluation unbounded reference; no-history/no-protection ablations at 40k; proposed versus strongest simple comparator at 95% of observed backend allocated peak. 13 primary runs, at most 16 with paired second-seed/reference. All constants, forecast limitations, exact hook files/functions, invariants and proposed command/config contract are in the design artifact. Those new runner/config files do not yet exist.
+- Primary-source targeted reread: Pocket-SLAM already combines contribution ranking with tracking-gradient tile budgets; DiskChunGS already uses preemptive chunk loading/LRU and Gaussian residency budgets; MemGS already merges geometric redundancy in voxels. Novelty remains unproven; the differentiated hypothesis is temporal tracking-support retention beyond recency/window/opacity under common feasible constraints, not budget plumbing or coverage alone.
+
+Next three actions for implementation, authorized only when the user starts that session:
+
+1. Give GPT-6 Sol Medium `docs/RETENTION_METHOD_V1.md`; implement pure controller/ranking and stable metadata lifecycle first, coordinating the interface with Devon. Validate synthetic optimizer/row/EMA/staging invariants.
+2. Integrate tracking feedback, pre-allocation hooks, phase peak measurement and fixed evaluation on the current local environment; run a declared short smoke and one 40k proposed pilot. Preserve disabled upstream behavior and identical CPU transport.
+3. Run the small comparator/ablation matrix, inspect actual compliance before quality, and record preliminary positive/negative results before Thursday October 8. No learned policy, new hardware reproduction, paging or full literature implementation is required for this pilot.
+
+### 2026-10-01 V1 implementation: metadata checkpoint
+
+- CONFIRMED source change: `GaussianMetadata` now owns CPU stable IDs, creation and lineage frames, last-seen, tracking EMA, probation expiry, observation flag, and map/keyframe counters. `GaussianModel` appends it for insertion/clone/split, filters it in `prune_points`, initializes it after PLY load, and checks alignment after mutation. Split child metadata follows the same parent `repeat(N)` order as parameter rows. IDs do not recycle after deletion.
+- CONFIRMED validation: `LD_LIBRARY_PATH` local environment, `pytest tests/test_gaussian_metadata.py` passed 3 tests, including a CUDA GaussianModel with populated Adam state, clone, split, pruning and preserved moments/step. This checks lifecycle plumbing, not tracking feedback integration or budgeted execution.
+- Decision: retain the user's existing uncommitted design artifact and its previous handoff addition; no A/B result artifacts are modified. This checkpoint precedes controller integration.
+
+Next three actions:
+
+1. Implement pure deterministic policy rankings, common support protection and row admission planning with focused tests.
+2. Integrate preemptive insertion and gross densification admission into backend/model, preserving the disabled upstream path.
+3. Deliver frontend tracking feedback and fixed-frame evaluation, then run a declared smoke and first constrained comparison.

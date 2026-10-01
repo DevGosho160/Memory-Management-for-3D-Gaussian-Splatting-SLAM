@@ -17,6 +17,7 @@ import torch
 from plyfile import PlyData, PlyElement
 from simple_knn._C import distCUDA2
 from torch import nn
+from project_utils.gaussian_metadata import GaussianMetadata
 
 from gaussian_splatting.utils.general_utils import (
     build_rotation,
@@ -47,6 +48,11 @@ class GaussianModel:
 
         self.unique_kfIDs = torch.empty(0).int()
         self.n_obs = torch.empty(0).int()
+        self.metadata = GaussianMetadata()
+        self.current_frame = -1
+        self.row_keep_callback = None
+        self.row_limit = None
+        self.max_live_rows = 0
 
         self.optimizer = None
 
@@ -230,6 +236,7 @@ class GaussianModel:
             new_rotation,
             new_kf_ids=new_unique_kfIDs,
             new_n_obs=new_n_obs,
+            creation_frame=kf_id,
         )
 
     def extend_from_pcd_seq(
@@ -464,6 +471,8 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self._xyz.shape[0]), device="cuda")
         self.unique_kfIDs = torch.zeros((self._xyz.shape[0]))
         self.n_obs = torch.zeros((self._xyz.shape[0]), device="cpu").int()
+        self.metadata = GaussianMetadata()
+        self.metadata.append(self._xyz.shape[0], frame=-1)
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -504,6 +513,8 @@ class GaussianModel:
 
     def prune_points(self, mask):
         valid_points_mask = ~mask
+        if valid_points_mask.numel() != self.get_xyz.shape[0]:
+            raise ValueError("Prune mask is not row aligned")
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
@@ -519,6 +530,10 @@ class GaussianModel:
         self.max_radii2D = self.max_radii2D[valid_points_mask]
         self.unique_kfIDs = self.unique_kfIDs[valid_points_mask.cpu()]
         self.n_obs = self.n_obs[valid_points_mask.cpu()]
+        self.metadata.filter(valid_points_mask)
+        if self.row_keep_callback is not None:
+            self.row_keep_callback(valid_points_mask)
+        self.metadata.assert_aligned(self.get_xyz.shape[0])
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -564,7 +579,13 @@ class GaussianModel:
         new_rotation,
         new_kf_ids=None,
         new_n_obs=None,
+        creation_frame=None,
+        parent_indices=None,
     ):
+        old_count = self.get_xyz.shape[0]
+        added_count = new_xyz.shape[0]
+        if self.row_limit is not None and old_count + added_count > self.row_limit:
+            raise RuntimeError("Strict Gaussian row ceiling would be violated during append")
         d = {
             "xyz": new_xyz,
             "f_dc": new_features_dc,
@@ -589,6 +610,11 @@ class GaussianModel:
             self.unique_kfIDs = torch.cat((self.unique_kfIDs, new_kf_ids)).int()
         if new_n_obs is not None:
             self.n_obs = torch.cat((self.n_obs, new_n_obs)).int()
+        self.metadata.append(added_count,
+                             self.current_frame if creation_frame is None else creation_frame,
+                             parent_indices=parent_indices)
+        self.max_live_rows = max(self.max_live_rows, self.get_xyz.shape[0])
+        self.metadata.assert_aligned(self.get_xyz.shape[0])
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
@@ -629,6 +655,7 @@ class GaussianModel:
             new_rotation,
             new_kf_ids=new_kf_id,
             new_n_obs=new_n_obs,
+            parent_indices=torch.where(selected_pts_mask.cpu())[0].repeat(N),
         )
 
         prune_filter = torch.cat(
@@ -669,6 +696,7 @@ class GaussianModel:
             new_rotation,
             new_kf_ids=new_kf_id,
             new_n_obs=new_n_obs,
+            parent_indices=torch.where(selected_pts_mask.cpu())[0],
         )
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
