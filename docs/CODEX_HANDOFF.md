@@ -230,3 +230,16 @@ Next three actions:
 1. Complete only seed 0 for Random, V1, no-T and spatially balanced Random; stop on any control assertion.
 2. Run the analyzer and inspect all hashes, counters, probe non-mutation, diversity and reconstruction metrics before comparative interpretation.
 3. Report seed-0 results and stop for user review; do not launch seeds 1 or 2 automatically.
+
+### 2026-10-01 controlled-retention seed-0 result checkpoint
+
+- Run revision `335f7776a011d85d4f5fd0a4e6446b0b674ca8c6` on `phillip/pruning-baseline`. Four sequential opt-in diagnostic arms completed: Random, V1, no-T ranking ablation and spatially balanced Random. Raw local artifacts: `MonoGS_System/MonoGS/results/controlled_retention_seed0/`; committed summary/provenance: `docs/CONTROLLED_RETENTION_SEED0_2026-10-01.md` and `docs/artifacts/controlled_retention_seed0/`. No `slam.py` behavior, V1 weights or normal-policy semantics were changed; no seeds 1 or 2 were launched.
+- CONFIRMED control validity: identical initialization digest `8a3522a44f506536609f00a187fd909055b2768e12cb2096761e281e9d68900d`, schedule digest `5dfc20c0798b8d6325cf3c98034097651782e4423c689246cae485b334097fd2`, and 56 cached-batch digests across arms. Each arm admitted all 713,944 later rows, matched post-retention/post-insertion occupancy at every event, executed 8,400 post-init optimizer steps, and had 38,000 maximum observed rows, zero K=40,000 violations, immutable mapping camera poses/exposure, and 26 non-mutating 100-step probes. All 761 dataset hashes match the room0 manifest. Analyzer and diversity gate passed. Preflight, three focused tests, Python compilation and `git diff --check` passed.
+- CONFIRMED primary probe RMSE at frozen frame-344 map, frames 345–370, in mm: Random 0.429; V1 0.480; no-T 0.408; spatial Random 0.507. These are direct GT-coordinate **probe localization errors**, not aligned online SLAM ATE. Spatial Random increased f344 effective 0.5 m cell count from Random's 228.1 to 304.6 but did not improve return localization or persistent RGB reconstruction. V1 still underperformed no-T on translation RMSE. Final reconstruction and allocator/cost details are in the result document.
+- DECISION: no spatial-retention method is justified from seed 0. The old Random advantage over V1 survives this controlled simplified mapper, so scheduling differences alone do not explain it, but one submillimeter seed and an unmeasured identical-arm variation floor preclude broader superiority claims. Keep the old upstream-maintenance online result separate. A strict row ceiling and process PyTorch allocator samples do not prove an application-wide GPU memory budget.
+
+Next three actions:
+
+1. Present the four-arm seed-0 diagnostic and its control hashes/counters to Phillip and coordinate infrastructure interpretation with Devon.
+2. Decide whether paired seeds 1 and 2 plus an identical Random rerun are warranted to resolve the sub-0.1 mm differences; do not launch them automatically.
+3. If continuing, retain the frozen protocol and test uncertainty/replication before designing or tuning a new retention mechanism.

@@ -1,0 +1,15 @@
+{
+  "run_revision": "335f7776a011d85d4f5fd0a4e6446b0b674ca8c6",
+  "seed": 0,
+  "dataset_manifest_sha256": "1f77e47818d5d27aca706bdf9db0103b2cf9ceeba6a7675614dea2f6a7771ceb",
+  "dataset_file_hashes_verified": 761,
+  "control_analyzer": "passed",
+  "probe_preflight": "passed",
+  "arms": [
+    "random",
+    "v1",
+    "no_t",
+    "spatial_random"
+  ],
+  "raw_local_dir": "/home/phillubt/projects/3dGS/MonoGS_System/MonoGS/results/controlled_retention_seed0"
+}
