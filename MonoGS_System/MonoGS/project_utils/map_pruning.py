@@ -2,11 +2,21 @@ import torch
 from gaussian_splatting.scene.gaussian_model import GaussianModel
 
 def prune_by_opacity(gaussian_model: GaussianModel, min_opacity: float):
-    if gaussian_model.get_xyz.shape[0] == 0: return
-    
-    # Prune mask is True where opacity is less than the threshold
-    prune_mask = (gaussian_model.get_opacity < min_opacity).squeeze()
-    gaussian_model.prune_points(prune_mask)
+    """Prune low-opacity rows; return the pre-prune mask for visibility alignment."""
+    count = gaussian_model.get_xyz.shape[0]
+    if count == 0:
+        return torch.zeros(0, dtype=torch.bool, device=gaussian_model.get_xyz.device)
+
+    opacity = gaussian_model.get_opacity.reshape(-1)
+    prune_mask = opacity < min_opacity
+    to_prune = int(prune_mask.sum().item())
+    if to_prune == count:
+        # The renderer cannot operate on an empty map. Ties keep the first row.
+        prune_mask[torch.argmax(opacity)] = False
+        to_prune -= 1
+    if to_prune:
+        gaussian_model.prune_points(prune_mask)
+    return prune_mask
 
 def prune_by_volume(gaussian_model: GaussianModel, max_scale: float):
     if gaussian_model.get_xyz.shape[0] == 0: return

@@ -19,6 +19,7 @@ from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gaussian_splatting.utils.system_utils import mkdir_p
 from gui import gui_utils, slam_gui
 from utils.config_utils import load_config
+from utils.cpu_transfer_queue import CPUTransferQueue
 from utils.dataset import load_dataset
 from utils.eval_utils import eval_ate, eval_rendering, save_gaussians
 from utils.logging_utils import Log
@@ -72,6 +73,9 @@ class SLAM:
 
         frontend_queue = mp.Queue()
         backend_queue = mp.Queue()
+        if config.get("Experiment", {}).get("cpu_transfer", False):
+            frontend_queue = CPUTransferQueue(frontend_queue)
+            backend_queue = CPUTransferQueue(backend_queue)
 
         q_main2vis = mp.Queue() if self.use_gui else FakeQueue()
         q_vis2main = mp.Queue() if self.use_gui else FakeQueue()
@@ -91,8 +95,14 @@ class SLAM:
         self.frontend.q_vis2main = q_vis2main
         self.frontend.set_hyperparams()
 
-        self.backend.gaussians = self.gaussians
-        self.backend.background = self.background
+        # CPU-transfer mode constructs the initially empty model and background
+        # in the child; sending either CUDA object at spawn would still use IPC.
+        if config.get("Experiment", {}).get("cpu_transfer", False):
+            self.backend.gaussians = None
+            self.backend.background = None
+        else:
+            self.backend.gaussians = self.gaussians
+            self.backend.background = self.background
         self.backend.cameras_extent = 6.0
         self.backend.pipeline_params = self.pipeline_params
         self.backend.opt_params = self.opt_params
@@ -241,6 +251,10 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--no-memory-limits", action="store_true",
                         help="Disable the added per-process allocator/RLIMIT defaults")
+    parser.add_argument("--cpu-transfer", action="store_true",
+                        help="Opt-in CPU serialization for WSL CUDA IPC compatibility")
+    parser.add_argument("--opacity-prune-threshold", type=float, default=None,
+                        help="Opt-in extra opacity pruning after each keyframe map")
 
     args = parser.parse_args(sys.argv[1:])
 
@@ -254,6 +268,11 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     config.setdefault("Experiment", {})["seed"] = args.seed
+    config["Experiment"]["cpu_transfer"] = args.cpu_transfer
+    if args.opacity_prune_threshold is not None:
+        if not 0.0 < args.opacity_prune_threshold < 1.0:
+            parser.error("--opacity-prune-threshold must be between 0 and 1")
+        config["Experiment"]["opacity_prune_threshold"] = args.opacity_prune_threshold
     save_dir = None
 
     if args.eval:

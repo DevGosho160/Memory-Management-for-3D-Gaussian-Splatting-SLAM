@@ -58,3 +58,63 @@ Next three actions now:
 1. Resolve the CUDA IPC execution choice; retain the exact two-process architecture if a compatible runtime/host is available.
 2. Complete one upstream-behavior office0 slice run and summarize its trace/metrics before adding optional pruning.
 3. Add safe opacity pruning through `GaussianModel.prune_points` and repeat the same configuration/seed, then compare completion, ATE, online rendering, counts and CUDA memory.
+
+## 2026-10-01 local checkpoint
+
+- CONFIRMED: `febf3ce` on `phillip/pruning-baseline` commits the reviewed setup, passive telemetry, 100-frame slice tooling/config, CUDA build compatibility fixes, and documentation. `main` was not modified; nothing was pushed. Git author used Phillip's most recent repository identity for this commit only because this checkout lacked a configured author.
+- CONFIRMED: staged paths were inspected before commit; no dataset, results, environment, compiler, archive, or build artifact was included. `compileall` and `git diff --cached --check` passed.
+- Decision: user authorized an explicitly labeled CPU-transfer compatibility workaround for this WSL CUDA IPC failure, with the same mechanism for A and B. Its transfer time, CPU memory, end-to-end FPS, and cross-process GPU memory effects cannot support final system-level claims.
+
+Next three actions:
+
+1. Implement an opt-in serialized CPU transfer for only the frontend/backend queues and initialize the empty backend model in the child so startup also avoids CUDA IPC. Verify it with a minimal multiprocessing test.
+2. Complete Phase A on 100-frame office0 slice with seed 0, online evaluation, no custom pruning or memory limit; preserve exact artifacts and summarize before B.
+3. Add one deterministic opacity policy via `prune_points`, keep the same transfer/config/seed, complete Phase B, and produce comparison and plotting CSVs.
+
+### CPU-transfer and Phase A progress
+
+- Opt-in `--cpu-transfer` wraps only the frontend/backend multiprocessing queues with `torch.save`/`torch.load` through CPU bytes, retaining each tensor's device tag. The backend constructs its initially empty GaussianModel/background in the child, avoiding startup CUDA IPC. Default mode remains the original queue/model transfer. A standalone spawned-process test passed CUDA and CPU tensors in both directions and preserved values/devices.
+- First CPU-transfer run reached frontend frame 100 and produced a full mapping trace, but final ATE failed because local `evo==1.37.1` removed `trajectory.align_trajectory`. Run `results/replica_office0_slice100/2026-10-01-00-38-51` is marked failed, so it is not Phase A. The repository's `evo==1.11.0` was incompatible with Python 3.14; we returned to 1.37.1 and changed only ATE alignment to the current `PosePath3D.align` API. Posthoc evaluation of its saved 19-pose trajectory succeeded, and LPIPS model initialization succeeded. Phase A is being rerun for a complete record.
+- `scripts/export_frame_traces.py` has been smoke tested on the failed run; it exports measured backend keyframe samples to `frame_vs_gaussians.csv` and `frame_vs_cuda_memory.csv`. These are sparse keyframe samples, not an inferred value for every camera frame.
+
+### Phase A completed before pruning integration
+
+- CONFIRMED complete run: `results/replica_office0_slice100/2026-10-01-00-44-52/`, `completion.json` status `completed`, 100 frames, seed 0, 19 retained keyframes. Exact command from `MonoGS_System/MonoGS`: `PYTHONUNBUFFERED=1 LD_LIBRARY_PATH="$PWD/.toolchain/root/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" .venv/bin/python slam.py --config configs/rgbd/replica/office0_slice100_sp.yaml --online-eval --seed 0 --no-memory-limits --cpu-transfer`. Resolved `config.yml`, `run_manifest.json`, per-process telemetry CSV, trajectory/ATE files, online rendering metrics, final PLY and `online_summary.json` are in that run directory. No 26k refinement was run.
+- Final Gaussian count **54,918**. Backend CUDA peak allocated **1,148,377,088 bytes**, peak reserved **1,302,331,392 bytes** (cumulative PyTorch allocator counters from the backend CSV). Online runtime **286.886375 s**, end-to-end FPS 0.34857. ATE RMSE **0.0006086733 m** on 19 keyframes. Before-opt PSNR **42.3556616**, SSIM **0.98283933**, LPIPS **0.03959721**. Final PLY row count matches 54,918. Backend telemetry has 3,856 data rows and upstream densification/pruning events.
+- Limit: CPU serialization affects transfer time, CPU RAM, end-to-end FPS, and cross-process GPU memory behavior. These values compare A/B under the same workaround; they are not final system-level memory/throughput benchmark claims. Allocator peak is backend-process scope, not whole-application/device peak.
+- Decision for B: fixed opacity threshold 0.5, applied after existing keyframe mapping/maintenance, preserving at least one Gaussian. New Gaussians enter at opacity 0.5, and the final A map has 0.91% below 0.5. This is a simple, conservative extra pruning baseline, not a budget controller or novel policy.
+
+Next three actions:
+
+1. Add only the opt-in opacity helper/backend hook, filter visibility caches with the same pre-prune mask, and validate optimizer/metadata alignment on a small model.
+2. Run B with the same scene, seed, CPU transfer, no memory limits, and online evaluation; preserve all artifacts.
+3. Export A/B frame/count and frame/backend CUDA traces, compute matched metrics and deletion counts, report limitations and Git status without pushing.
+
+### Phase B launched
+
+- B uses exact A command plus only `--opacity-prune-threshold 0.5`; run directory `results/replica_office0_slice100/2026-10-01-00-51-48/`. `config.yml` and manifest record the enabled policy. Same 100-frame data, seed 0, CPU transfer, no custom memory limit, headless online metrics, and no refinement.
+- The existing `project_utils.map_pruning.prune_by_opacity` now returns a one-dimensional pre-prune mask, preserves the highest-opacity row if all would be removed, and calls `GaussianModel.prune_points()` for actual deletion. The backend applies it after keyframe mapping and filters window visibility arrays by that same mask. A three-row real GaussianModel test with populated Adam state confirmed row alignment of optimizer moments, origin IDs, and observation counts, including the keep-one case. `compileall` and `git diff --check` passed.
+- Early B telemetry confirms `extra_opacity_prune` events at keyframes 4, 8, and 13, removing 195, 217, and 245 rows respectively. Completion and quality are pending; do not claim improvement yet.
+
+### Final comparable pair correction (2026-10-01)
+
+- The first completed A/B pair above is retained for diagnosis but superseded: B's last keyframe at frame 99 was still queued when the frontend finalized at frame 100. Its backend later reached 54,920 Gaussians while the evaluated frontend map had 52,464. `FrontEnd.run` now waits for any outstanding final keyframe before final save/evaluation. This changes end-of-sequence synchronization, not tracking/mapping equations. Both A and B are being rerun with the fix.
+- A second reproducibility issue was found before accepting the pair: Open3D's `random_down_sample` used its own RNG. Backend now seeds `o3d.utility.random` with the same seed 0 as Python/NumPy/Torch. Repeated Open3D downsampling with seed 0 selected identical points in an isolated check. A partial rerun before this fix was stopped and is not a result.
+- CONFIRMED final-pair A: `results/replica_office0_slice100/2026-10-01-01-01-20/` completed 100 frames with frontend/backend final counts both **55,365** at frame 99. Backend CUDA peak allocated **1,149,759,488 bytes**, reserved **1,302,331,392 bytes**; runtime **286.66946875 s**; ATE **0.0007402668 m**; PSNR **42.37517817**, SSIM **0.98324368**, LPIPS **0.03846904**. Exact command is the Phase A command above. Resolved config, manifest, completion, telemetry, trajectory, rendering and PLY are saved. B with the same code/data/seed/transfer/evaluation plus opacity threshold 0.5 has been launched; results pending.
+- Prior A/B keyframe IDs diverged after frame 36. Existing MonoGS ATE and rendering evaluation therefore used policy-dependent keyframe/non-keyframe sets. This remains a quality-comparison limitation unless the final pair happens to select identical IDs; the final report must check and disclose it. No new evaluation viewpoint freeze was added to this first result.
+
+### Final 100-frame A/B result (2026-10-01)
+
+- CONFIRMED final pair: A `results/replica_office0_slice100/2026-10-01-01-01-20/`, B `results/replica_office0_slice100/2026-10-01-01-06-28/`, relative to `MonoGS_System/MonoGS`. Both `completion.json` files report `completed`; both processed 100 frames, finished backend mapping through frame 99, and have matching frontend/backend final map counts and 19 retained keyframes. Each directory contains `config.yml`, `run_manifest.json`, backend/frontend telemetry, online summary, trajectory/ATE and before-opt rendering metrics. The final pair supersedes the earlier completed pair and the partial/failed runs above.
+- Exact command, from executable root, with working directory `MonoGS_System/MonoGS`: `PYTHONUNBUFFERED=1 LD_LIBRARY_PATH="$PWD/.toolchain/root/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" .venv/bin/python slam.py --config configs/rgbd/replica/office0_slice100_sp.yaml --online-eval --seed 0 --no-memory-limits --cpu-transfer` for A; append `--opacity-prune-threshold 0.5` for B. Both were run headless, without W&B or post-run 26k refinement. The resolved configs match apart from output directory and B's opacity threshold. The dataset's ignored `slice_manifest.json` records source archive and file hashes.
+- A: final Gaussians **55,365**; backend peak CUDA allocated **1,149,759,488 B**; peak reserved **1,302,331,392 B**; ATE RMSE **0.0007402668 m**; online PSNR **42.375178**, SSIM **0.98324368**, LPIPS **0.03846904**; online runtime **286.6695 s**.
+- B: final Gaussians **54,989**; backend peak CUDA allocated **1,148,273,152 B**; peak reserved **1,302,331,392 B**; ATE RMSE **0.0007055720 m**; online PSNR **42.264529**, SSIM **0.98299556**, LPIPS **0.03896548**; online runtime **289.6299 s**. Eighteen additional opacity-prune events removed **6,396 cumulative rows** (0.894% of the summed candidate counts at those events). Final map has **376 fewer rows (0.679%)** than A; backend peak allocated is **1,486,336 B (1.42 MiB)** lower and peak reserved is unchanged. Cumulative removals include rows that would later have been replaced/densified/pruned by upstream behavior; they are not unique final-map savings.
+- CONFIRMED quality comparison detail: A retained keyframe 52 where B retained 53; the other 18 retained keyframe IDs match. ATE therefore evaluates a slightly different keyframe set. The evaluator samples every fifth non-keyframe; all **17 rendering viewpoint IDs match exactly** between A and B. The two runs are one seed on a declared 100-frame slice; the small peak allocated difference does not establish a memory-budget effect.
+- CSV artifacts: `results/replica_office0_slice100/comparison_final_2026-10-01/comparison.csv`, `frame_vs_gaussians.csv`, and `frame_vs_cuda_memory.csv` (plus `comparison.json`). Frame plots contain **measured backend keyframe samples** only; they do not interpolate each camera frame. Per-process telemetry also records mapping time, retained keyframe count, iteration, upstream densification/pruning and extra-opacity events. Artifacts are ignored locally and intentionally absent from Git.
+- LIMITATION: the opt-in CPU serialization changes CPU/GPU transfer timing, total CPU memory, end-to-end FPS/runtime, and cross-process GPU memory behavior. Neither runtime/FPS nor these backend allocator peaks are final application-wide system benchmark claims. No custom memory limit was active. No obvious crash or failed final synchronization occurred in either final run; only modest Gaussian/allocated-peak reduction and a slight rendering-quality decrease were observed.
+
+Next three actions:
+
+1. Keep the first A/B result and scripts on the local branch; reproduce on a CUDA IPC-capable environment to establish ordinary cross-process memory/throughput measurements.
+2. Freeze evaluation viewpoint IDs or report common-keyframe ATE on the saved trajectories before interpreting small ATE changes; repeat the same single policy on a full scene or second seed for robustness.
+3. Decide with Devon how this measured opacity baseline fits the budget/controller work, without treating a Gaussian-count cap as an application-wide GPU-memory budget.

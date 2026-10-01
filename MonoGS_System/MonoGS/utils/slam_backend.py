@@ -2,11 +2,14 @@ import random
 import time
 
 import numpy as np
+import open3d as o3d
 import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
+from project_utils.map_pruning import prune_by_opacity
 from gaussian_splatting.gaussian_renderer import render
+from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gaussian_splatting.utils.loss_utils import l1_loss, ssim
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
@@ -75,6 +78,9 @@ class BackEnd(mp.Process):
             self.config["Dataset"]["single_thread"]
             if "single_thread" in self.config["Dataset"]
             else False
+        )
+        self.opacity_prune_threshold = self.config.get("Experiment", {}).get(
+            "opacity_prune_threshold"
         )
 
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
@@ -409,6 +415,15 @@ class BackEnd(mp.Process):
             random.seed(seed)
             np.random.seed(seed)
             torch.manual_seed(seed)
+            o3d.utility.random.seed(seed)
+        if self.config.get("Experiment", {}).get("cpu_transfer", False):
+            # Only the transport changes: this is the same initially empty
+            # GaussianModel that the parent normally passes through CUDA IPC.
+            sh_degree = 3 if self.config["Training"]["spherical_harmonics"] else 0
+            self.gaussians = GaussianModel(sh_degree, config=self.config)
+            self.gaussians.init_lr(6.0)
+            self.gaussians.training_setup(self.opt_params)
+            self.background = torch.zeros(3, dtype=torch.float32, device="cuda")
         self.telemetry = RunTelemetry(self.config["Results"].get("save_dir"), "backend")
         self.record_telemetry("backend_start")
         while True:
@@ -520,6 +535,24 @@ class BackEnd(mp.Process):
 
                     self.map(self.current_window, iters=iter_per_kf)
                     self.map(self.current_window, prune=True)
+                    if self.opacity_prune_threshold is not None:
+                        before = self.gaussians.get_xyz.shape[0]
+                        with torch.no_grad():
+                            prune_mask = prune_by_opacity(
+                                self.gaussians, self.opacity_prune_threshold
+                            )
+                            if self.gaussians.get_xyz.shape[0] != before:
+                                keep = ~prune_mask
+                                self.occ_aware_visibility = {
+                                    kf_id: visibility[keep]
+                                    for kf_id, visibility in self.occ_aware_visibility.items()
+                                }
+                        after = self.gaussians.get_xyz.shape[0]
+                        assert self.gaussians.unique_kfIDs.shape[0] == after
+                        assert self.gaussians.n_obs.shape[0] == after
+                        assert all(v.shape[0] == after for v in self.occ_aware_visibility.values())
+                        self.record_telemetry("extra_opacity_prune", count_before=before,
+                                              count_after=after)
                     self.push_to_frontend("keyframe")
                 else:
                     raise Exception("Unprocessed data", data)

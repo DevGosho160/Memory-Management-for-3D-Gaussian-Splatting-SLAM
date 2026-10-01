@@ -353,6 +353,12 @@ class FrontEnd(mp.Process):
             if self.frontend_queue.empty():
                 tic.record()
                 if cur_frame_idx >= len(self.dataset):
+                    # Finish any final keyframe before saving/evaluating the map.
+                    # Otherwise a late backend update can arrive after the
+                    # frontend has already captured its final snapshot.
+                    if self.requested_init or self.requested_keyframe > 0:
+                        time.sleep(0.01)
+                        continue
                     if self.gaussians is not None:
                         telemetry.record("frontend_complete", self.gaussians,
                                          frame_idx=cur_frame_idx,
