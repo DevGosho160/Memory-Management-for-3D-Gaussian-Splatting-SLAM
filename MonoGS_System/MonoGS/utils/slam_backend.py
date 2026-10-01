@@ -50,6 +50,7 @@ class BackEnd(mp.Process):
         self.frame_idx = None
         self.retention = None
         self.policy_times_ms = []
+        self.retention_diagnostic_file = None
 
     def record_telemetry(self, event, **kwargs):
         if self.telemetry is not None:
@@ -132,7 +133,61 @@ class BackEnd(mp.Process):
             seed=self.config.get("Experiment", {}).get("seed", 0),
             use_tracking_history=self.retention_config.get("use_tracking_history", True),
             half_life=self.retention_config.get("visibility_half_life_frames", 20))
+        if self.retention_config.get("event_diagnostics", False):
+            self._retention_diagnostic_state = dict(
+                ids=meta.gaussian_id.numpy(), opacity=opacity,
+                origins=model.unique_kfIDs.numpy(),
+                xyz=model.get_xyz.detach().cpu().numpy(),
+                last_seen=meta.last_seen_frame.numpy(),
+                tracking=meta.tracking_ema.numpy(), window=window_fraction,
+                probation=meta.probation_until_kf_event.numpy() > meta.kf_event_index,
+                order=order)
         return order, protected
+
+    def _record_retention_decision(self, event, plan, protected, growth, elapsed):
+        """Optional CPU summary; performed after policy timing and before the next mutation."""
+        if not self.retention_config.get("event_diagnostics", False):
+            return
+        state = self._retention_diagnostic_state
+        n = len(plan.keep)
+        seen = state["last_seen"] >= 0
+        recency = np.zeros(n, dtype=np.float64)
+        recency[seen] = np.exp2(-np.maximum(0, self.frame_idx - state["last_seen"][seen]) /
+                                 self.retention_config.get("visibility_half_life_frames", 20))
+        recency[state["probation"] & ~seen] = 1.0
+        components = dict(T=state["tracking"], W=state["window"],
+                          R=recency, O=state["opacity"])
+        quantiles = [0, .1, .25, .5, .75, .9, 1]
+        def distribution(values):
+            values = np.asarray(values)
+            return dict(zip(("min", "p10", "p25", "median", "p75", "p90", "max"),
+                            np.quantile(values, quantiles).tolist())) if len(values) else {}
+        correlations = {}
+        names = list(components)
+        for i, left in enumerate(names):
+            for right in names[i+1:]:
+                a, b = components[left], components[right]
+                correlations[f"{left}_{right}"] = (float(np.corrcoef(a, b)[0, 1])
+                    if n > 1 and np.std(a) > 0 and np.std(b) > 0 else None)
+        selected = plan.keep
+        origin, origin_counts = np.unique(state["origins"][selected], return_counts=True)
+        cells = np.floor(state["xyz"][selected] /
+                         self.retention_config.get("spatial_cell_m", .5)).astype(np.int64)
+        unique_cells, cell_counts = np.unique(cells, axis=0, return_counts=True)
+        record = dict(event=event, frame=self.frame_idx, iteration=self.iteration_count,
+                      map_version=self.gaussians.metadata.map_version,
+                      candidate_count=n, protected_count=plan.protected_count,
+                      selected_count=int(selected.sum()), rejected_growth=growth-plan.admitted_growth,
+                      admitted_growth=plan.admitted_growth, policy_decision_ms=elapsed,
+                      component_distributions={key: distribution(value) for key, value in components.items()},
+                      component_correlations=correlations,
+                      nonzero_T_fraction=float(np.mean(components["T"] != 0)) if n else 0,
+                      T_quantiles=distribution(components["T"]),
+                      last_seen_quantiles=distribution(state["last_seen"]),
+                      retained_origin_keyframes=dict(zip(map(str, origin.tolist()), origin_counts.tolist())),
+                      retained_spatial_cells={",".join(map(str, cell)): int(count)
+                                              for cell, count in zip(unique_cells.tolist(), cell_counts.tolist())})
+        self.retention_diagnostic_file.write(json.dumps(record, allow_nan=False) + "\n")
 
     def _apply_row_plan(self, plan):
         if not np.all(plan.keep):
@@ -177,6 +232,7 @@ class BackEnd(mp.Process):
                               attempted_growth=count, admitted_growth=admitted,
                               rejected_growth=count-admitted, policy_wall_ms=elapsed,
                               protected_rows=plan.protected_count)
+        self._record_retention_decision("insert", plan, protected, count, elapsed)
         return indices
 
     def _densify_admission(self, grads, clone_mask, split_mask):
@@ -225,6 +281,7 @@ class BackEnd(mp.Process):
                               rejected_growth=total_attempted-used,
                               protected_rows=plan.protected_count,
                               policy_wall_ms=elapsed)
+        self._record_retention_decision("densify", plan, protected, total_attempted, elapsed)
         return ([value for value, cost in accepted if cost == 1],
                 [value for value, cost in accepted if cost == 2])
 
@@ -590,6 +647,10 @@ class BackEnd(mp.Process):
             self.gaussians.training_setup(self.opt_params)
             self.background = torch.zeros(3, dtype=torch.float32, device="cuda")
         self.telemetry = RunTelemetry(self.config["Results"].get("save_dir"), "backend")
+        if self.retention is not None and self.retention_config.get("event_diagnostics", False):
+            self.retention_diagnostic_file = open(os.path.join(
+                self.config["Results"]["save_dir"], "retention_events.jsonl"),
+                "w", encoding="utf-8", buffering=1)
         self.record_telemetry("backend_start")
         while True:
             if self.backend_queue.empty():
@@ -642,6 +703,9 @@ class BackEnd(mp.Process):
                     if self.retention is not None:
                         feedback_start = time.perf_counter()
                         block = data[5]
+                        if self.retention_config.get("event_diagnostics", False):
+                            prior_t = self.gaussians.metadata.tracking_ema.numpy().copy()
+                            prior_seen = self.gaussians.metadata.last_seen_frame.numpy().copy()
                         self.gaussians.metadata.apply_feedback(
                             ids=block["ids"], version=block["version"],
                             sequence=block["sequence"], frames=block["frames"],
@@ -655,6 +719,25 @@ class BackEnd(mp.Process):
                                               count_before=self.gaussians.get_xyz.shape[0],
                                               count_after=self.gaussians.get_xyz.shape[0],
                                               policy_wall_ms=feedback_elapsed)
+                        if self.retention_diagnostic_file is not None:
+                            meta = self.gaussians.metadata
+                            self.retention_diagnostic_file.write(json.dumps({
+                                "event": "feedback", "frame": cur_frame_idx,
+                                "start_frame": block["start_frame"],
+                                "end_frame": block["end_frame"],
+                                "frames": block["frames"], "sequence": block["sequence"],
+                                "map_version": block["version"],
+                                "feedback_ids": len(block["ids"]),
+                                "nonzero_weighted_hit_fraction": float(np.mean(
+                                    np.asarray(block["weighted_hits"]) != 0)),
+                                "last_seen_changed_count": int(np.count_nonzero(
+                                    meta.last_seen_frame.numpy() != prior_seen)),
+                                "T_before_quantiles": np.quantile(prior_t,
+                                    [0, .1, .25, .5, .75, .9, 1]).tolist(),
+                                "T_after_quantiles": np.quantile(meta.tracking_ema.numpy(),
+                                    [0, .1, .25, .5, .75, .9, 1]).tolist(),
+                                "feedback_apply_ms": feedback_elapsed,
+                            }) + "\n")
 
                     self.viewpoints[cur_frame_idx] = viewpoint
                     self.current_window = current_window
@@ -765,4 +848,6 @@ class BackEnd(mp.Process):
                     "backend_cuda_peak_reserved_bytes": torch.cuda.max_memory_reserved(),
                 }, file, indent=2)
         self.telemetry.close()
+        if self.retention_diagnostic_file is not None:
+            self.retention_diagnostic_file.close()
         return

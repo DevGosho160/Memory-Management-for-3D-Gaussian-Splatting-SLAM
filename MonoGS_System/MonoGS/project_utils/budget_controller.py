@@ -48,11 +48,12 @@ class RowBudgetController:
         costs = list(atomic_costs) if atomic_costs is not None else [1] * gross_growth
         if any(cost < 1 for cost in costs) or sum(costs) != gross_growth:
             raise ValueError("Invalid atomic growth costs")
-        if protected.sum() > self.maximum or (count and self.maximum < 1):
+        protected_count = int(protected.sum())
+        if protected_count > self.maximum or (count and self.maximum < 1):
             raise BudgetInfeasible("Protected support cannot fit row ceiling")
         # Reclaim to low watermark only when planned staging would exceed K.
         pressure = count + gross_growth > self.maximum
-        floor = max(int(protected.sum()), int(count > 0))
+        floor = max(protected_count, int(count > 0))
         effective_low = max(self.low, floor)
         capacity = (effective_low - floor) if pressure else (self.maximum - count)
         admitted = 0
@@ -64,18 +65,22 @@ class RowBudgetController:
         target = min(count, effective_low - admitted) if pressure else count
         if target < floor:
             raise BudgetInfeasible("Protected support leaves no admission headroom")
-        keep = protected.copy()
-        for index in priority:
-            if keep.sum() >= target:
-                break
-            keep[index] = True
-        if keep.sum() != target:
+        if target == count:
+            keep = np.ones(count, dtype=bool)
+        else:
+            keep = protected.copy()
+            need = target - protected_count
+            if need:
+                unprotected = priority[~protected[priority]]
+                keep[unprotected[:need]] = True
+        kept_count = int(keep.sum())
+        if kept_count != target:
             raise BudgetInfeasible("Cannot meet retention target")
-        if keep.sum() + admitted > self.maximum:
+        if kept_count + admitted > self.maximum:
             raise AssertionError("Gross staged addition exceeds row ceiling")
         rejected = gross_growth - admitted
         self.attempted_growth += gross_growth
         self.admitted_growth += admitted
         self.rejected_growth += rejected
         return RowPlan(keep, gross_growth, admitted, rejected, target,
-                       int(protected.sum()))
+                       protected_count)

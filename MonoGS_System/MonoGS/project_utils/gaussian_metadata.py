@@ -78,13 +78,24 @@ class GaussianMetadata:
         last_seen = torch.as_tensor(last_seen, dtype=torch.int32)
         if ids.numel() != weighted_hits.numel() or ids.numel() != last_seen.numel():
             raise ValueError("Tracking feedback length mismatch")
-        positions = {int(value): idx for idx, value in enumerate(self.gaussian_id.tolist())}
-        for j, value in enumerate(ids.tolist()):
-            i = positions.get(value)
-            if i is None:
-                continue
-            self.tracking_ema[i] = beta ** frames * self.tracking_ema[i] + weighted_hits[j]
-            self.last_seen_frame[i] = max(self.last_seen_frame[i], last_seen[j])
-            if last_seen[j] >= 0:
-                self.observed_since_creation[i] = True
+        # Stable IDs stay ordered after append/filter. Duplicate feedback IDs are not
+        # emitted by the frontend, but retain the old sequential behavior for them.
+        if ids.numel() and torch.unique(ids).numel() != ids.numel():
+            positions = {int(value): idx for idx, value in enumerate(self.gaussian_id.tolist())}
+            for j, value in enumerate(ids.tolist()):
+                i = positions.get(value)
+                if i is None:
+                    continue
+                self.tracking_ema[i] = beta ** frames * self.tracking_ema[i] + weighted_hits[j]
+                self.last_seen_frame[i] = max(self.last_seen_frame[i], last_seen[j])
+                if last_seen[j] >= 0:
+                    self.observed_since_creation[i] = True
+        elif ids.numel() and len(self):
+            positions = torch.searchsorted(self.gaussian_id, ids)
+            valid = positions < len(self)
+            valid[valid.clone()] &= self.gaussian_id[positions[valid]] == ids[valid]
+            rows = positions[valid]
+            self.tracking_ema[rows] = beta ** frames * self.tracking_ema[rows] + weighted_hits[valid]
+            self.last_seen_frame[rows] = torch.maximum(self.last_seen_frame[rows], last_seen[valid])
+            self.observed_since_creation[rows] |= last_seen[valid] >= 0
         self._next_feedback_sequence = sequence + 1

@@ -20,6 +20,38 @@ from utils.config_utils import load_config
 POLICIES = ("opacity", "random", "lru", "tracking_support")
 
 
+def write_frame_diagnostics(path, trajectory, backend_rows):
+    """Join fixed-pose errors to the last completed backend state at each frame."""
+    est = np.asarray(trajectory["trj_est"])[:, :3, 3]
+    gt = np.asarray(trajectory["trj_gt"])[:, :3, 3]
+    x, y = est - est.mean(0), gt - gt.mean(0)
+    u, _, vt = np.linalg.svd(x.T @ y)
+    correction = np.eye(3)
+    correction[2, 2] = np.linalg.det(u @ vt)
+    errors = np.linalg.norm(x @ u @ correction @ vt + gt.mean(0) - gt, axis=1)
+    state, events = {}, {}
+    for row in backend_rows:
+        if not row["frame_idx"]:
+            continue
+        frame = int(row["frame_idx"])
+        if row["event"] in ("retention_insert_plan", "retention_densify_plan"):
+            events.setdefault(frame, []).append(row["event"])
+        state[frame] = row
+    columns = ("frame", "fixed_frame_error_m", "keyframe_count", "cumulative_mapping_iterations",
+               "pruning_admission_events", "gaussian_count")
+    last = None
+    with (path / "frame_diagnostics.csv").open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=columns)
+        writer.writeheader()
+        for frame, error in zip(trajectory["trj_id"], errors):
+            last = state.get(frame, last)
+            writer.writerow(dict(frame=frame, fixed_frame_error_m=float(error),
+                                 keyframe_count=last["retained_keyframes"] if last else "",
+                                 cumulative_mapping_iterations=last["mapping_iteration"] if last else "",
+                                 pruning_admission_events=";".join(events.get(frame, [])),
+                                 gaussian_count=last["gaussian_count"] if last else ""))
+
+
 def summarize(run_dir, policy):
     path = Path(run_dir)
     completion = json.loads((path / "completion.json").read_text())
@@ -36,13 +68,14 @@ def summarize(run_dir, policy):
                   runtime_s=online["online_runtime_s"], fixed_ate_rmse=fixed["rmse"],
                   psnr=render["mean_psnr"], ssim=render["mean_ssim"],
                   lpips=render["mean_lpips"], rendering_ids=render["view_ids"])
-    if trajectory["trj_id"] != list(range(100)):
+    if trajectory["trj_id"] != list(range(online["frames"])):
         raise RuntimeError(f"Fixed ATE pose IDs differ in {path}")
-    if len(render["view_ids"]) != 17:
+    if not render["view_ids"]:
         raise RuntimeError(f"Fixed rendering IDs missing in {path}")
     backend = next(path.glob("telemetry_backend_*.csv"))
     with backend.open(newline="") as file:
         samples = list(csv.DictReader(file))
+    write_frame_diagnostics(path, trajectory, samples)
     result["backend_peak_allocated_bytes"] = max(
         int(row["cuda_peak_allocated_bytes"]) for row in samples)
     result["backend_peak_reserved_bytes"] = max(
@@ -72,18 +105,22 @@ def main():
                         default=list(POLICIES))
     parser.add_argument("--reference", action="store_true")
     parser.add_argument("--no-tracking-history", action="store_true")
+    parser.add_argument("--revisit-triplet", action="store_true",
+                        help="Run only random, full V1 and no-T at one ceiling")
     args = parser.parse_args()
     base = load_config(args.config)
     out = Path("results") / f"retention_pilot_{datetime.now():%Y-%m-%d-%H-%M-%S}"
     out.mkdir(parents=True)
     rows = []
-    names = (["reference"] if args.reference else []) + args.policies
+    names = (["random", "tracking_support", "no-T"] if args.revisit_triplet else
+             (["reference"] if args.reference else []) + args.policies)
     for name in names:
         config = json.loads(json.dumps(base))
         config["Retention"]["enabled"] = name != "reference"
-        config["Retention"]["policy"] = name if name != "reference" else "tracking_support"
+        config["Retention"]["policy"] = ("tracking_support" if name in ("reference", "no-T") else name)
         config["Retention"]["max_gaussians"] = args.budget
-        config["Retention"]["use_tracking_history"] = not args.no_tracking_history
+        config["Retention"]["use_tracking_history"] = (name != "no-T" and
+                                                      not args.no_tracking_history)
         config_path = out / f"{name}.yaml"
         config_path.write_text(yaml.safe_dump(config))
         command = [sys.executable, "slam.py", "--config", str(config_path),
