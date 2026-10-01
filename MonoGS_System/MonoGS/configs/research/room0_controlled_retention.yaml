@@ -1,0 +1,12 @@
+inherit_from: configs/research/room0_revisit380_v1.yaml
+ControlledRetention:
+  frames: 380
+  ceiling: 40000
+  mapping_steps: 150
+  schedule_seed_offset: 19073
+  return_map_frame: 344
+  return_probe_start: 345
+  return_probe_end: 370
+  probe_steps: 100
+  spatial_cell_m: 0.5
+  reference_trajectory: results/replica_room0_revisit380/2026-10-01-05-09-38/plot/trj_final.json

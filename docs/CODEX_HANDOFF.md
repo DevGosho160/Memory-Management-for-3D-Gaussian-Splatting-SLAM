@@ -216,3 +216,17 @@ Next three actions, for a future separately authorized session only:
 1. Share the measured controller/diagnostic contract and negative/underdetermined triplet with Devon; agree on infrastructure ownership before broader work.
 2. If the research question continues, repeat matched seeds and add same-state selection/future-visibility attribution to isolate T from initial stochastic and keyframe-work divergence.
 3. Revisit any V2 mechanism only after replicated revisit evidence identifies a specific failure mode; preserve the upstream and random comparisons.
+
+### 2026-10-01 controlled-retention runner validation checkpoint
+
+- Source revision before this checkpoint: `f6dc8cc`. Added an opt-in single-process frozen-pose diagnostic runner, control/checkpoint helpers, room0 config, analyzer, and focused schedule/spatial tests. Normal `slam.py`, existing V1 score, controller and upstream behavior were not changed. The spatially balanced Random arm is diagnostic, not a proposed new method. Infrastructure implementation and interpretation should be coordinated with Devon and Phillip under their documented responsibilities.
+- CONFIRMED preparation validation: the frame-0 model initialized once and a local serialized checkpoint restored identically in all four verification loads. The digest covers Gaussian parameters, Adam state/group settings, densification statistics, origin and observation rows, full metadata/counters, backend iteration and visibility masks; optimizer parameter bindings were checked. Fifty-six complete cached RGB-D Gaussian batches were generated for the Random reference's 57 keyframes. The runner will verify each batch hash before every policy insertion.
+- CONFIRMED focused validation: three control tests passed; source compilation and `git diff --check` passed. A 100-step probe preflight on a restored initialized map verified unchanged mapper parameters, optimizer, metadata and RNG state; one fixed-view reconstruction evaluation completed. The preflight initially exposed a GT-pose dtype mismatch in rotation diagnostics, which was fixed before comparative execution. Comparative completion remains unconfirmed until the runner and analyzer finish. Preparation artifacts are ignored under `MonoGS_System/MonoGS/results/controlled_retention_seed0/`.
+- PLANNED protocol: room0 frames 0–379, K=40,000, GT mapping poses and zero exposure, deterministic FIFO windows and older-view IDs, 150 optimizer steps for each of 56 later keyframes, shared cached insertions, no post-init adaptive densification or ordinary maintenance deletion. The primary 100-step return probes use a frame-344 map copy and frames 345–370; they do not feed mapping or retention. Strict admission, event occupancy, schedule, hash, row, pose and probe-state assertions gate interpretation.
+- OPEN: four-arm completion, spatial diversity gate, return probe and reconstruction differences, and runtime/allocator outcomes. Do not extrapolate from the prior online triplet or claim application-wide GPU memory compliance.
+
+Next three actions:
+
+1. Complete only seed 0 for Random, V1, no-T and spatially balanced Random; stop on any control assertion.
+2. Run the analyzer and inspect all hashes, counters, probe non-mutation, diversity and reconstruction metrics before comparative interpretation.
+3. Report seed-0 results and stop for user review; do not launch seeds 1 or 2 automatically.
