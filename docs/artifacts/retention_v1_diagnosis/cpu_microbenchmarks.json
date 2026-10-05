@@ -1,0 +1,29 @@
+{
+  "scope": "Unchanged V1 CPU functions; actual final xyz/opacity; SYNTHETIC unavailable metadata/masks/priorities. Not historical per-stage timings.",
+  "n": 32476,
+  "planner_no_pressure_ms": [
+    278.892646994791,
+    267.5595949986018,
+    268.5233399970457
+  ],
+  "planner_insert_pressure_ms": [
+    217.27969299536198,
+    217.76424298877828,
+    218.041500003892
+  ],
+  "metadata_feedback_ms": [
+    413.5722920036642,
+    395.03607399819884,
+    392.19952300481964
+  ],
+  "support_floors_ms": [
+    24.378358997637406,
+    25.310347002232447,
+    24.860769000952132
+  ],
+  "v1_ranking_ms": [
+    2.7687200054060668,
+    2.1092599927214906,
+    2.0978789980290458
+  ]
+}

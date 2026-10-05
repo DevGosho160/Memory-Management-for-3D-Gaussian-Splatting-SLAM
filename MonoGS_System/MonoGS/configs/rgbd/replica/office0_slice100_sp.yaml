@@ -1,0 +1,5 @@
+inherit_from: "configs/rgbd/replica/office0_sp.yaml"
+Dataset:
+  dataset_path: "datasets/replica/office0_slice100/"
+Results:
+  use_gui: False

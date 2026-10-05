@@ -12,6 +12,7 @@ from utils.eval_utils import eval_ate, save_gaussians
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
+from utils.run_telemetry import RunTelemetry
 from utils.slam_utils import get_loss_tracking, get_median_depth
 
 
@@ -42,6 +43,12 @@ class FrontEnd(mp.Process):
         self.cameras = dict()
         self.device = "cuda:0"
         self.pause = False
+        self.backend_worker = None
+        self.feedback_sequence = 0
+        self.feedback_hits = None
+        self.feedback_last_seen = None
+        self.feedback_frames = 0
+        self.feedback_start = None
 
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
@@ -53,6 +60,54 @@ class FrontEnd(mp.Process):
         self.kf_interval = self.config["Training"]["kf_interval"]
         self.window_size = self.config["Training"]["window_size"]
         self.single_thread = self.config["Training"]["single_thread"]
+        self.retention_enabled = self.config.get("Retention", {}).get("enabled", False)
+        self.feedback_beta = 2 ** (-1 / self.config.get("Retention", {}).get(
+            "visibility_half_life_frames", 20))
+
+    def _reset_feedback_block(self):
+        if not self.retention_enabled or self.gaussians is None:
+            return
+        n = self.gaussians.get_xyz.shape[0]
+        self.feedback_hits = torch.zeros(n, device="cuda", dtype=torch.float32)
+        self.feedback_last_seen = torch.full((n,), -1, device="cuda", dtype=torch.int32)
+        self.feedback_frames = 0
+        self.feedback_start = None
+
+    def _accumulate_feedback(self, frame_idx, viewpoint):
+        if not self.retention_enabled:
+            return
+        if self.feedback_hits is None:
+            self._reset_feedback_block()
+        with torch.no_grad():
+            final_render = render(viewpoint, self.gaussians,
+                                  self.pipeline_params, self.background)
+            hits = final_render["n_touched"] > 0
+            if hits.numel() != self.feedback_hits.numel():
+                raise ValueError("Frontend tracking feedback lost row alignment")
+            self.feedback_hits.mul_(self.feedback_beta).add_(
+                hits.float(), alpha=1 - self.feedback_beta)
+            self.feedback_last_seen[hits] = frame_idx
+        if self.feedback_start is None:
+            self.feedback_start = frame_idx
+        self.feedback_frames += 1
+
+    def _take_feedback_block(self, frame_idx):
+        if not self.retention_enabled:
+            return None
+        meta = self.gaussians.metadata
+        block = {
+            "ids": meta.gaussian_id.clone(),
+            "version": meta.map_version,
+            "sequence": self.feedback_sequence,
+            "frames": self.feedback_frames,
+            "start_frame": self.feedback_start,
+            "end_frame": frame_idx,
+            "weighted_hits": self.feedback_hits.cpu(),
+            "last_seen": self.feedback_last_seen.cpu(),
+        }
+        self.feedback_sequence += 1
+        self._reset_feedback_block()
+        return block
 
     def add_new_keyframe(self, cur_frame_idx, depth=None, opacity=None, init=False):
         rgb_boundary_threshold = self.config["Training"]["rgb_boundary_threshold"]
@@ -113,6 +168,8 @@ class FrontEnd(mp.Process):
         self.iteration_count = 0
         self.occ_aware_visibility = {}
         self.current_window = []
+        self.feedback_sequence = 0
+        self.feedback_hits = None
         # remove everything from the queues
         while not self.backend_queue.empty():
             self.backend_queue.get()
@@ -287,6 +344,8 @@ class FrontEnd(mp.Process):
 
     def request_keyframe(self, cur_frame_idx, viewpoint, current_window, depthmap):
         msg = ["keyframe", cur_frame_idx, viewpoint, current_window, depthmap]
+        if self.retention_enabled:
+            msg.append(self._take_feedback_block(cur_frame_idx))
         self.backend_queue.put(msg)
         self.requested_keyframe += 1
 
@@ -301,6 +360,7 @@ class FrontEnd(mp.Process):
 
     def sync_backend(self, data):
         self.gaussians = data[1]
+        self._reset_feedback_block()
         occ_aware_visibility = data[2]
         keyframes = data[3]
         self.occ_aware_visibility = occ_aware_visibility
@@ -314,6 +374,7 @@ class FrontEnd(mp.Process):
             torch.cuda.empty_cache()
 
     def run(self):
+        telemetry = RunTelemetry(self.save_dir, "frontend")
         cur_frame_idx = 0
         projection_matrix = getProjectionMatrix2(
             znear=0.01,
@@ -330,6 +391,11 @@ class FrontEnd(mp.Process):
         toc = torch.cuda.Event(enable_timing=True)
 
         while True:
+            if self.backend_worker is not None and not self.backend_worker.is_alive():
+                raise RuntimeError(
+                    f"Backend exited before the frontend completed "
+                    f"(exit code {getattr(self.backend_worker, 'exitcode', None)})"
+                )
             if self.q_vis2main.empty():
                 if self.pause:
                     continue
@@ -345,7 +411,26 @@ class FrontEnd(mp.Process):
             if self.frontend_queue.empty():
                 tic.record()
                 if cur_frame_idx >= len(self.dataset):
+                    # Finish any final keyframe before saving/evaluating the map.
+                    # Otherwise a late backend update can arrive after the
+                    # frontend has already captured its final snapshot.
+                    if self.requested_init or self.requested_keyframe > 0:
+                        time.sleep(0.01)
+                        continue
+                    if self.gaussians is not None:
+                        telemetry.record("frontend_complete", self.gaussians,
+                                         frame_idx=cur_frame_idx,
+                                         iteration=self.iteration_count,
+                                         retained_keyframes=len(self.kf_indices),
+                                         window_keyframes=len(self.current_window))
                     if self.save_results:
+                        if self.config.get("Evaluation", {}).get("pose_ids") == "all":
+                            eval_ate(
+                                self.cameras, self.kf_indices, self.save_dir, 0,
+                                final=True, monocular=self.monocular,
+                                pose_ids=list(range(len(self.dataset))),
+                                label_override="fixed_final",
+                            )
                         eval_ate(
                             self.cameras,
                             self.kf_indices,
@@ -381,6 +466,11 @@ class FrontEnd(mp.Process):
                 if self.reset:
                     self.initialize(cur_frame_idx, viewpoint)
                     self.current_window.append(cur_frame_idx)
+                    if self.gaussians is not None:
+                        telemetry.record("frontend_initialize_requested", self.gaussians,
+                                         frame_idx=cur_frame_idx,
+                                         retained_keyframes=len(self.kf_indices),
+                                         window_keyframes=len(self.current_window))
                     cur_frame_idx += 1
                     continue
 
@@ -390,6 +480,13 @@ class FrontEnd(mp.Process):
 
                 # Tracking
                 render_pkg = self.tracking(cur_frame_idx, viewpoint)
+                feedback_start = time.perf_counter()
+                self._accumulate_feedback(cur_frame_idx, viewpoint)
+                if self.retention_enabled:
+                    torch.cuda.synchronize()
+                    telemetry.record("tracking_feedback_accumulate", self.gaussians,
+                                     frame_idx=cur_frame_idx,
+                                     policy_wall_ms=(time.perf_counter() - feedback_start) * 1000)
 
                 current_window_dict = {}
                 current_window_dict[self.current_window[0]] = self.current_window[1:]
@@ -456,6 +553,11 @@ class FrontEnd(mp.Process):
                     )
                 else:
                     self.cleanup(cur_frame_idx)
+                telemetry.record("frontend_frame", self.gaussians,
+                                 frame_idx=cur_frame_idx,
+                                 iteration=self.iteration_count,
+                                 retained_keyframes=len(self.kf_indices),
+                                 window_keyframes=len(self.current_window))
                 cur_frame_idx += 1
 
                 if (
@@ -494,3 +596,4 @@ class FrontEnd(mp.Process):
                 elif data[0] == "stop":
                     Log("Frontend Stopped.")
                     break
+        telemetry.close()

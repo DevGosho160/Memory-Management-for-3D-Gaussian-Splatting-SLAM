@@ -1,0 +1,23 @@
+inherit_from: configs/rgbd/replica/room0_sp.yaml
+Dataset:
+  dataset_path: datasets/replica/room0_revisit380/
+Results:
+  use_gui: false
+Retention:
+  enabled: true
+  policy: tracking_support
+  max_gaussians: 40000
+  low_watermark_fraction: 0.95
+  max_densify_gross_fraction: 0.05
+  visibility_half_life_frames: 20
+  utility_weights: [0.50, 0.25, 0.15, 0.10]
+  protect_support: true
+  use_tracking_history: true
+  spatial_cell_m: 0.5
+  spatial_min_rows: 2
+  origin_min_rows: 64
+  window_view_min_rows: 128
+  event_diagnostics: true
+Evaluation:
+  pose_ids: all
+  rendering_ids: [20, 40, 60, 70, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 340, 350, 360, 370]
