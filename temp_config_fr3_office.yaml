@@ -17,7 +17,7 @@ Dataset:
   single_thread: true
 Retention:
   enabled: true
-  max_gaussians: 1600000
+  max_gaussians: 3200000
   policy: opacity
 Training:
   single_thread: true
