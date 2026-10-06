@@ -27,8 +27,8 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False):
     traj_ref = PosePath3D(poses_se3=poses_gt)
     traj_est = PosePath3D(poses_se3=poses_est)
     # Current evo aligns PosePath3D in place; the former module helper was removed.
-    traj_est.align(traj_ref, correct_scale=monocular)
-    traj_est_aligned = traj_est
+    import evo.core.trajectory as evo_trj
+    traj_est_aligned = evo_trj.align_trajectory(traj_est, traj_ref, correct_scale=monocular)
 
     ## RMSE
     pose_relation = metrics.PoseRelation.translation_part
@@ -46,21 +46,7 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False):
     ) as f:
         json.dump(ape_stats, f, indent=4)
 
-    plot_mode = evo.tools.plot.PlotMode.xy
-    fig = plt.figure()
-    ax = evo.tools.plot.prepare_axis(fig, plot_mode)
-    ax.set_title(f"ATE RMSE: {ape_stat}")
-    evo.tools.plot.traj(ax, plot_mode, traj_ref, "--", "gray", "gt")
-    evo.tools.plot.traj_colormap(
-        ax,
-        traj_est_aligned,
-        ape_metric.error,
-        plot_mode,
-        min_map=ape_stats["min"],
-        max_map=ape_stats["max"],
-    )
-    ax.legend()
-    plt.savefig(os.path.join(plot_dir, "evo_2dplot_{}.png".format(str(label))), dpi=90)
+    # Removed plotting code to avoid matplotlib colorbar errors.
 
     return ape_stat
 
@@ -111,7 +97,7 @@ def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False,
         label=label_evo,
         monocular=monocular,
     )
-    wandb.log({"frame_idx": latest_frame_idx, "ate": ate})
+    # wandb.log({"frame_idx": latest_frame_idx, "ate": ate})
     return ate
 
 

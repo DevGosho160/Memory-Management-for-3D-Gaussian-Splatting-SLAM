@@ -31,8 +31,8 @@ setup(
                 "C:\\Users\\dgosh\\miniconda3\\envs\\MonoGS\\Library\\include"
             ],
             extra_compile_args={
-                "nvcc": ["-allow-unsupported-compiler", "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH", "-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party/glm/")],
-                "cxx": ["-D__ALLOW_UNSUPPORTED_COMPILER__", "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"]
+                "nvcc": ["-allow-unsupported-compiler", "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH", "-D_DISABLE_EXTENDED_ALIGNED_STORAGE", "-D_HAS_DEPRECATED_RESULT_OF=1", "-std=c++20", "-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party/glm/")],
+                "cxx": ["-D__ALLOW_UNSUPPORTED_COMPILER__", "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH", "-D_DISABLE_EXTENDED_ALIGNED_STORAGE", "-D_HAS_DEPRECATED_RESULT_OF=1", "/std:c++20"]
             })
         ],
     cmdclass={

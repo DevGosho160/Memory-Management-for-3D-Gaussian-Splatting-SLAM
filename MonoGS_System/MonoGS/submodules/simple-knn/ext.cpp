@@ -9,6 +9,10 @@
  * For inquiries contact  george.drettakis@inria.fr
  */
 
+#define _HAS_DEPRECATED_RESULT_OF 1
+#define _SILENCE_CXX17_RESULT_OF_DEPRECATION_WARNING
+#define _DISABLE_EXTENDED_ALIGNED_STORAGE 1
+
 #include <torch/extension.h>
 #include "spatial.h"
 

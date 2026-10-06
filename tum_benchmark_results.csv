@@ -1,0 +1,17 @@
+Dataset,Pruning Method,VRAM Limit (GB),ATE,Processing Time (s),Status
+fr1_desk,Opacity,2,0.014450199396881797,1559.13,Success
+fr1_desk,Opacity,4,0.014384251820297999,1543.33,Success
+fr1_desk,Opacity,8,0.01521858855470845,1584.09,Success
+fr1_desk,Opacity,None,0.014455304000423018,1581.97,Success
+fr1_desk,Visibility,2,0.01496729781211046,1537.11,Success
+fr1_desk,Visibility,4,0.014400158042696858,1473.33,Success
+fr1_desk,Visibility,8,0.013997674590251866,1461.10,Success
+fr1_desk,Visibility,None,0.014723208393430364,1471.79,Success
+fr2_xyz,Opacity,2,0.011806651913418792,2204.42,Success
+fr2_xyz,Opacity,4,0.011952156018306945,2145.18,Success
+fr2_xyz,Opacity,8,0.013146743099673237,2246.94,Success
+fr2_xyz,Opacity,None,0.013022130724390568,2181.22,Success
+fr2_xyz,Visibility,2,0.011404415761125096,2322.72,Success
+fr2_xyz,Visibility,4,0.0127767624877886,2351.70,Success
+fr2_xyz,Visibility,8,0.012865417391099861,2304.60,Success
+fr2_xyz,Visibility,None,0.011570692800401529,2238.91,Success

@@ -15,9 +15,39 @@ import numpy as np
 import open3d as o3d
 import torch
 from plyfile import PlyData, PlyElement
-from simple_knn._C import distCUDA2
 from torch import nn
 from project_utils.gaussian_metadata import GaussianMetadata
+
+def distCUDA2(points):
+    """
+    Pure PyTorch fallback for simple_knn distCUDA2.
+    Computes the mean squared distance to the 3 nearest neighbors.
+    """
+    P = points.shape[0]
+    if P == 0:
+        return torch.empty((0,), device=points.device, dtype=points.dtype)
+    elif P <= 3:
+        # If there are 3 or fewer points, the nearest neighbors are just the other points.
+        dists = torch.cdist(points, points)
+        # return the mean of squared distances (excluding self)
+        res = torch.zeros(P, device=points.device, dtype=points.dtype)
+        for i in range(P):
+            if P > 1:
+                res[i] = (dists[i, torch.arange(P) != i] ** 2).mean()
+        return res
+    
+    # For large P, chunk the distance computation to avoid OOM
+    res = torch.zeros(P, device=points.device, dtype=points.dtype)
+    chunk_size = 2000
+    for i in range(0, P, chunk_size):
+        end = min(P, i + chunk_size)
+        chunk = points[i:end]
+        dists = torch.cdist(chunk, points)
+        # We need the 4 smallest distances (the first is the point itself, dist=0)
+        vals, _ = torch.topk(dists, 4, largest=False)
+        # exclude self and square
+        res[i:end] = (vals[:, 1:] ** 2).mean(dim=1)
+    return res
 
 from gaussian_splatting.utils.general_utils import (
     build_rotation,

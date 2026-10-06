@@ -20,6 +20,8 @@ if os.name == 'nt':
 
 cxx_compiler_flags.append("-D__ALLOW_UNSUPPORTED_COMPILER__")
 cxx_compiler_flags.append("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH")
+cxx_compiler_flags.append("-D_DISABLE_EXTENDED_ALIGNED_STORAGE")
+cxx_compiler_flags.append("-D_HAS_DEPRECATED_RESULT_OF=1")
 setup(
     name="simple_knn",
     ext_modules=[
@@ -33,7 +35,7 @@ setup(
                 "C:\\Users\\dgosh\\miniconda3\\envs\\MonoGS\\Library\\include\\targets\\x64",
                 "C:\\Users\\dgosh\\miniconda3\\envs\\MonoGS\\Library\\include"
             ],
-            extra_compile_args={"nvcc": ["-allow-unsupported-compiler", "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"], "cxx": cxx_compiler_flags})
+            extra_compile_args={"nvcc": ["-allow-unsupported-compiler", "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH", "-D_DISABLE_EXTENDED_ALIGNED_STORAGE", "-D_HAS_DEPRECATED_RESULT_OF=1", "-std=c++20"], "cxx": cxx_compiler_flags + ["/std:c++20"]})
         ],
     cmdclass={
         'build_ext': BuildExtension

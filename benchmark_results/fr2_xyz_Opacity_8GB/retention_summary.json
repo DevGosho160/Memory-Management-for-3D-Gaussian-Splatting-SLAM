@@ -1,0 +1,15 @@
+{
+  "policy": "opacity",
+  "row_ceiling": 6400000,
+  "max_live_rows": 40689,
+  "final_rows": 29580,
+  "row_violations": 0,
+  "attempted_growth": 570992,
+  "admitted_growth": 570992,
+  "rejected_growth": 0,
+  "policy_wall_ms_median": 27.811200125142932,
+  "policy_wall_ms_p95": 47.804079903289676,
+  "policy_wall_ms_total": 7176.5381982550025,
+  "backend_cuda_peak_allocated_bytes": 628766208,
+  "backend_cuda_peak_reserved_bytes": 702545920
+}

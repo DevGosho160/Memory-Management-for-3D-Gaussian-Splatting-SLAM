@@ -1,0 +1,15 @@
+{
+  "policy": "tracking_support",
+  "row_ceiling": 3200000,
+  "max_live_rows": 42836,
+  "final_rows": 29214,
+  "row_violations": 0,
+  "attempted_growth": 778541,
+  "admitted_growth": 778541,
+  "rejected_growth": 0,
+  "policy_wall_ms_median": 35.58370005339384,
+  "policy_wall_ms_p95": 52.79572000727057,
+  "policy_wall_ms_total": 9333.011298673227,
+  "backend_cuda_peak_allocated_bytes": 522494464,
+  "backend_cuda_peak_reserved_bytes": 564133888
+}
