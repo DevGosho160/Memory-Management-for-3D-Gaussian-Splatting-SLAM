@@ -16,3 +16,10 @@ fr2_xyz,Visibility,4,0.0127767624877886,2351.70,Success
 fr2_xyz,Visibility,8,0.012865417391099861,2304.60,Success
 fr2_xyz,Visibility,None,0.011570692800401529,2238.91,Success
 fr3_office,Opacity,2,0.02085300847385659,3936.78,Success
+fr3_office,Opacity,4,0.018682744236748542,3872.58,Success
+fr3_office,Opacity,8,0.01892229972991415,3870.78,Success
+fr3_office,Opacity,None,0.017829116637117937,3783.49,Success
+fr3_office,Visibility,2,0.018387735729609774,3858.44,Success
+fr3_office,Visibility,4,0.018355053319927508,3803.11,Success
+fr3_office,Visibility,8,0.02124394487388443,3674.98,Success
+fr3_office,Visibility,None,0.020664491172645277,3714.84,Success
