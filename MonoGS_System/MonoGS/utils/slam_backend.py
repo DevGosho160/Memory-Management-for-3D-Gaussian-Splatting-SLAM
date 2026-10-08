@@ -92,16 +92,8 @@ class BackEnd(mp.Process):
         self.opacity_prune_threshold = self.config.get("Experiment", {}).get(
             "opacity_prune_threshold"
         )
-        retention_config = self.config.get("Retention", {})
-        if retention_config.get("enabled", False):
-            if self.opacity_prune_threshold is not None:
-                raise ValueError("Budget retention and extra opacity threshold conflict")
-            if not self.single_thread or not self.config["Training"]["single_thread"]:
-                raise ValueError("V1 retention requires both single-thread scheduling flags")
-            self.retention = RowBudgetController(
-                retention_config["max_gaussians"],
-                retention_config.get("low_watermark_fraction", .95))
-            self.retention_config = retention_config
+        self.retention_config = self.config.get("Retention", {})
+        self.retention = None
 
     def _retention_inputs(self):
         model = self.gaussians
@@ -799,24 +791,70 @@ class BackEnd(mp.Process):
 
                     self.map(self.current_window, iters=iter_per_kf)
                     self.map(self.current_window, prune=True)
-                    if self.opacity_prune_threshold is not None:
-                        before = self.gaussians.get_xyz.shape[0]
-                        with torch.no_grad():
-                            prune_mask = prune_by_opacity(
-                                self.gaussians, self.opacity_prune_threshold
-                            )
-                            if self.gaussians.get_xyz.shape[0] != before:
-                                keep = ~prune_mask
-                                self.occ_aware_visibility = {
-                                    kf_id: visibility[keep]
-                                    for kf_id, visibility in self.occ_aware_visibility.items()
-                                }
-                        after = self.gaussians.get_xyz.shape[0]
-                        assert self.gaussians.unique_kfIDs.shape[0] == after
-                        assert self.gaussians.n_obs.shape[0] == after
-                        assert all(v.shape[0] == after for v in self.occ_aware_visibility.values())
-                        self.record_telemetry("extra_opacity_prune", count_before=before,
-                                              count_after=after)
+                    
+                    limit_gb = self.retention_config.get("memory_limit_gb", None)
+                    if limit_gb is not None and torch.cuda.is_available():
+                        allocated = torch.cuda.memory_allocated()
+                        total = limit_gb * (1024 ** 3)
+                        utilization = allocated / total
+                        
+                        if utilization > 0.80:
+                            policy = self.retention_config.get("policy", "Opacity")
+                            print(f"Memory Utilization {utilization:.2f} > 0.80. Engaging {policy} pruning...", flush=True)
+                            
+                            if policy == "Opacity":
+                                from project_utils.map_pruning import prune_by_opacity
+                                threshold = 0.05
+                                while utilization > 0.70 and threshold <= 1.0:
+                                    prune_mask = prune_by_opacity(self.gaussians, threshold)
+                                    if prune_mask.any():
+                                        keep = ~prune_mask
+                                        self.occ_aware_visibility = {k: v[keep] for k, v in self.occ_aware_visibility.items()}
+                                    utilization = torch.cuda.memory_allocated() / total
+                                    threshold += 0.05
+                            elif policy == "Volume":
+                                from project_utils.map_pruning import prune_by_volume
+                                threshold = 0.1
+                                while utilization > 0.70 and threshold >= 0.01:
+                                    prune_mask = prune_by_volume(self.gaussians, threshold)
+                                    if prune_mask.any():
+                                        keep = ~prune_mask
+                                        self.occ_aware_visibility = {k: v[keep] for k, v in self.occ_aware_visibility.items()}
+                                    utilization = torch.cuda.memory_allocated() / total
+                                    threshold -= 0.01
+                            elif policy == "Visibility":
+                                from project_utils.map_pruning import prune_by_visibility
+                                threshold = 2
+                                while utilization > 0.70 and threshold <= 20:
+                                    prune_mask = prune_by_visibility(self.gaussians, threshold)
+                                    if prune_mask.any():
+                                        keep = ~prune_mask
+                                        self.occ_aware_visibility = {k: v[keep] for k, v in self.occ_aware_visibility.items()}
+                                    utilization = torch.cuda.memory_allocated() / total
+                                    threshold += 1
+                            elif policy == "VoxelGrid":
+                                from project_utils.map_pruning import prune_by_voxel_grid
+                                threshold = 0.01
+                                while utilization > 0.70 and threshold <= 1.0:
+                                    prune_mask = prune_by_voxel_grid(self.gaussians, threshold)
+                                    if prune_mask.any():
+                                        keep = ~prune_mask
+                                        self.occ_aware_visibility = {k: v[keep] for k, v in self.occ_aware_visibility.items()}
+                                    utilization = torch.cuda.memory_allocated() / total
+                                    threshold *= 1.5
+                            elif policy == "Density":
+                                from project_utils.map_pruning import prune_by_density
+                                threshold = 1.0
+                                while utilization > 0.70 and threshold <= 1000.0:
+                                    prune_mask = prune_by_density(self.gaussians, threshold)
+                                    if prune_mask.any():
+                                        keep = ~prune_mask
+                                        self.occ_aware_visibility = {k: v[keep] for k, v in self.occ_aware_visibility.items()}
+                                    utilization = torch.cuda.memory_allocated() / total
+                                    threshold *= 2.0
+                                    
+                            print(f"Pruning finished. New utilization: {utilization:.2f}", flush=True)
+
                     self.push_to_frontend("keyframe")
                     if self.retention is not None:
                         self.gaussians.metadata.kf_event_index += 1

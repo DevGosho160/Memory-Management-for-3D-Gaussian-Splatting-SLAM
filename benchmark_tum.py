@@ -77,11 +77,14 @@ def main():
     ]
     
     methods = {
-        "Opacity": "opacity",
-        "Visibility": "tracking_support"  # tracking_support utilizes views and cell visibility
+        "Opacity": "Opacity",
+        "Volume": "Volume",
+        "Visibility": "Visibility",
+        "VoxelGrid": "VoxelGrid",
+        "Density": "Density"
     }
     
-    vram_limits = [2, 4, 8, "None"]
+    vram_limits = [0.5, 1.0]
     
     output_csv = "tum_benchmark_results.csv"
     
@@ -122,8 +125,7 @@ def main():
                     # Estimate max_gaussians to avoid OOM (roughly 300 bytes per gaussian, but overhead is larger)
                     # This is optional, but helps the retention policy actually do its job before PyTorch OOMs.
                     if vram != "None":
-                        # Rough heuristic: 1M gaussians ~ 1GB VRAM for rendering/optim overhead
-                        config_data["Retention"]["max_gaussians"] = int((vram * 1_000_000) * 0.8)
+                        config_data["Retention"]["memory_limit_gb"] = vram
                     else:
                         config_data["Retention"]["enabled"] = False # Disable for unlimited
                     

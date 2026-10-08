@@ -1,0 +1,9 @@
+{
+  "frames": 592,
+  "online_runtime_s": 1537.676625,
+  "online_fps": 0.3849964227686689,
+  "parent_cuda_peak_allocated_bytes": 535613440,
+  "parent_cuda_peak_reserved_bytes": 616562688,
+  "final_gaussian_count": 31280,
+  "retained_keyframes": 109
+}
