@@ -1,0 +1,137 @@
+# ==============================================================================
+# Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Datasets (Local Sensor Data & Sequences)
+# ------------------------------------------------------------------------------
+datasets/
+data/
+**/datasets/
+**/data/
+*.bag
+*.tgz
+*.tar.gz
+*.zip
+*.7z
+# Common SLAM sequence folders
+rgbd_dataset_*
+replica/
+euroc/
+tum/
+
+# ------------------------------------------------------------------------------
+# Benchmark Results, Experiment Logs & Outputs
+# ------------------------------------------------------------------------------
+benchmark_results/
+results/
+output/
+outputs/
+experiments/
+wandb/
+comparison_plots/
+**/benchmark_results/
+**/results/
+**/output/
+**/outputs/
+**/wandb/
+
+# Trajectory and map renderings
+*.mp4
+*.avi
+*.mov
+*.gif
+synthetic_memory_benchmark.png
+
+# Large 3D Map & Model Exports
+*.ply
+*.npz
+*.pt
+*.pth
+*.ckpt
+
+# Execution status & flags
+*.flag
+OOM_CRASH.flag
+run_status.json
+pruning_summary.json
+online_summary.json
+stats_*.json
+trj_*.json
+
+# ------------------------------------------------------------------------------
+# Python & Virtual Environments
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.env
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ------------------------------------------------------------------------------
+# C/C++ & CUDA Build Artifacts
+# ------------------------------------------------------------------------------
+build/
+*.pyd
+*.obj
+*.o
+*.lib
+*.exp
+*.dll
+*.dylib
+*.a
+*.pdb
+.cuda/
+.toolchain/
+
+# ------------------------------------------------------------------------------
+# Testing & Code Quality
+# ------------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ------------------------------------------------------------------------------
+# IDEs & Operating System Artifacts
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ------------------------------------------------------------------------------
+# Logs & Scratch Scripts
+# ------------------------------------------------------------------------------
+*.log
+pip-log.txt
+temp_runner.py
+temp_*.py
+temp_config_*.yaml

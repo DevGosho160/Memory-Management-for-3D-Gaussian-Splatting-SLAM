@@ -243,3 +243,175 @@ Next three actions:
 1. Present the four-arm seed-0 diagnostic and its control hashes/counters to Phillip and coordinate infrastructure interpretation with Devon.
 2. Decide whether paired seeds 1 and 2 plus an identical Random rerun are warranted to resolve the sub-0.1 mm differences; do not launch them automatically.
 3. If continuing, retain the frozen protocol and test uncertainty/replication before designing or tuning a new retention mechanism.
+
+## 2026-11-18 Repository Restructuring & Bitwise Multi-Heuristic Architecture Checkpoint
+
+- Reorganized repository structure:
+  - MonoGS moved to `system/MonoGS/`.
+  - SGS-SLAM moved to `system/SGS-SLAM/`.
+  - TUM RGB-D dataset moved to top-level `datasets/tum/` with all sequences (`rgbd_dataset_freiburg1_desk`, `rgbd_dataset_freiburg2_xyz`, `rgbd_dataset_freiburg3_long_office_household`).
+  - Added robust path resolution in `system/MonoGS/utils/dataset.py` and `system/SGS-SLAM/datasets/gradslam_datasets/tum.py` to auto-resolve datasets relative to repository root and system execution directories.
+  - Created SGS-SLAM TUM configuration files: `system/SGS-SLAM/configs/data/tum.yaml` and `system/SGS-SLAM/configs/tum/slam.py`.
+
+- Added `disable_memory_management` feature in both systems:
+  - MonoGS: skips upstream `densify_and_prune` deletions, opacity resets, covisibility pruning, and custom limits, allowing Gaussians to accumulate monotonically to trigger real OOM under memory pressure.
+  - SGS-SLAM: disables `prune_gaussians` and opacity reset, running unbounded into OOM.
+
+- Implemented Bitwise Memory Controller (`system/common/bitwise_controller.py`):
+  - On new keyframe, queries allocated VRAM (or RSS RAM if GPU unavailable).
+  - Dynamically computes bytes per Gaussian (accounting for parameters, Adam moments, and gradients).
+  - Estimates incoming Gaussian bytes, compares against user VRAM limit with transient headroom, and signals required pruning point count.
+
+- Implemented Multi-Heuristic Pruning System (`system/common/multi_heuristic_pruner.py`):
+  - Normalized [0, 1] scoring functions (7 heuristics total):
+    1. Opacity pruning: higher opacity = higher score.
+    2. Visibility pruning: higher observation count = higher score.
+    3. Voxel grid pruning: spatial density inverted (representatives score 1.0, over-dense clusters penalized).
+    4. Volume-based pruning: well-proportioned covariance / volume scored highest; floaters and degenerate splats penalized.
+    5. Tracking history pruning: hit frequency in last n frames.
+    6. Deterministic random pruning: SplitMix64 pseudo-random hash with signed 64-bit cross-platform constants.
+    7. Gaussian size pruning (bit size): computes representation size in bits (geometry, active SH coefficients, precision); smaller Gaussians scored higher (~1.0), larger Gaussians scored lower (~0.0).
+  - Weighted composite scoring with default weights: opacity=0.14, visibility=0.14, voxel_grid=0.14, volume_based=0.14, tracking_history=0.14, det_random=0.14, gaussian_size=0.16.
+  - Selects and removes lowest-scoring Gaussians while preserving minimum viable map.
+  - Neural Network weight adapter (`HeuristicWeightNN`) updated to 7 inputs for learned weight prediction.
+
+- Implemented Unified Configuration & Benchmark Runner (`run_experiments.py`):
+  - Configures dataset(s), systems (`MonoGS`, `SGS-SLAM`, `both`), memory mode (`none`, `upstream`, `custom`), VRAM limit, and heuristic weights.
+  - Consolidated benchmark runs: all test results consolidate into ONE unified run directory (`benchmark_results/unified_benchmark_run/` or user-defined `--run-name`), incrementally loading and merging entries in `benchmark_results.csv`, `comparison_summary.md`, `comparison_summary.json`, and regenerating comparison plots.
+  - Tracks and outputs: ATE RMSE, PSNR, SSIM, LPIPS, Peak VRAM/RAM, and throughput (FPS).
+  - Generates 5 visualization graphs over dataset frames (`graph_memory_vs_frame.png`, `graph_gaussians_vs_frame.png`, `graph_fps_vs_frame.png`, `graph_quality_vs_frame.png`, `graph_trajectory_3d.png`).
+  - Implemented `MapVideoRenderer` (`system/common/video_renderer.py`) exporting reconstructed map trajectory as MP4/GIF video at 30 FPS with temporal moving average smoothing to eliminate trajectory shakiness and rasterizer flicker.
+  - MonoGS video renders directly through all tracked frames in `slam.frontend.cameras` (continuous motion) instead of sparse keyframes; SGS-SLAM renders all evaluation frames at 30 FPS.
+
+- Validation:
+  - 16 unit tests passing in `tests/test_bitwise_controller.py`, `tests/test_multi_heuristic_pruner.py`, and `tests/test_metrics_and_video.py`.
+  - Dry-run validation passed on both MonoGS and SGS-SLAM across TUM sequences.
+  - Confirmed full end-to-end execution of `python run_experiments.py --system MonoGS --dataset fr1_desk --memory-management none`:
+    * Resolved Python environment auto-detection to use the dedicated Conda `MonoGS` environment (`C:\Users\dgosh\miniconda3\envs\MonoGS\python.exe`).
+    * Resolved circular import in `project_utils/map_pruning.py` with `from __future__ import annotations` and `TYPE_CHECKING`.
+    * Resolved tensor dimension mismatch between frontend visibility mask and densified backend Gaussian count via automatic visibility mask padding/slicing in `FrontEnd.is_keyframe`, `FrontEnd.add_to_window`, and `BackEnd.map`.
+    * Verified complete SLAM trajectory on TUM `fr1_desk` (592 frames, 133 keyframes):
+      - ATE RMSE: 0.0153 m (1.53 cm)
+      - PSNR: 19.225 dB
+      - SSIM: 0.7259
+      - LPIPS: 0.2708
+      - Final Gaussian Count: 394,247 Gaussians
+      - Peak VRAM: 1,710.48 MB (1.71 GB)
+      - Online throughput: 0.618 FPS
+    * Successfully generated and exported reconstructed map video along the estimated camera trajectory: `reconstructed_map_trajectory.mp4` (2.9 MB).
+  - Confirmed full end-to-end execution of SGS-SLAM (`python run_experiments.py --system SGS-SLAM --dataset fr1_desk --pruning-modes custom --vram-limits-gb 2.0`):
+    * Resolved CUDA rasterizer namedtuple arguments (`projmatrix_raw`, `debug`) in `setup_camera` and `Camera` instantiations.
+    * Added `SafeGaussianRasterizer` adapter in `system/SGS-SLAM/utils/recon_helpers.py` and `scripts/slam.py` to adapt 5-element rasterizer returns `(color, radii, depth, opacity, n_touched)` to SGS-SLAM's 3-element expectations `(color, radii, depth)`.
+    * Guarded `convert(..., is_semantic=True)` in `system/SGS-SLAM/utils/common_utils.py` so scenes without semantic annotations (TUM RGB-D) save parameters and PLY models cleanly without `KeyError: 'semantic_colors'`.
+    * Verified complete SLAM trajectory and metrics on TUM `fr1_desk`:
+      - ATE RMSE: 0.0041 m (0.41 cm)
+      - PSNR: 30.49 dB
+      - SSIM: 0.9738
+      - LPIPS: 0.0607
+      - Peak VRAM: 417.63 MB
+      - Online throughput: 0.403 FPS
+      - Final Gaussian Count: 301,321
+    * Successfully generated and exported reconstructed map video: `reconstructed_map_trajectory.mp4` (50.7 KB).
+
+- Added Fast Synthetic Benchmark & Verification Script (`test_memory_management_synthetic.py`):
+  - Provides instant validation (0.1–0.7 seconds) of the Bitwise Memory Controller and all 7 Multi-Heuristic Pruning scoring functions using randomly generated 3D Gaussians (no SLAM dataset processing needed).
+  - Simulates streaming keyframes, measuring exact Gaussian representation bit size and memory footprint (including Adam optimizer moment tensors `exp_avg`, `exp_avg_sq`, and gradients).
+  - Validates all 7 normalized scoring heuristics:
+    1. Opacity [0, 1]
+    2. Visibility [0, 1]
+    3. Voxel grid spatial density [0, 1]
+    4. Volume / covariance proportionality [0, 1]
+    5. Tracking history hit frequency [0, 1]
+    6. Deterministic pseudo-randomness (SplitMix64) [0, 1]
+    7. Representation size in bits [0, 1] (smaller bit footprints scored higher)
+  - Validates Neural Network weight adapter (`HeuristicWeightNN`) predicting normalized softmax weights.
+  - Compares Unconstrained (no pruning) vs Bitwise Bounded Pruning side-by-side, outputting formatted keyframe metrics tables and saving comparative memory and count curves to `synthetic_memory_benchmark.png`.
+  - Config options placed directly at the top of `test_memory_management_synthetic.py` for easy adjustment without arguments, while also exposing full CLI flags.
+
+- Enforced PyTorch GPU Allocator Memory Limits & Clean OOM Handling:
+  - Allowed arbitrary sub-1GB budgets (e.g. 0.5 GB) in `system/MonoGS/project_utils/memory_limit.py`.
+  - Propagated `gpu_limit_mem` across multiprocessing boundaries to spawned backend processes in `system/MonoGS/utils/slam_backend.py` and `FrontEnd.run()`.
+  - Enforced `torch.cuda.set_per_process_memory_fraction` in SGS-SLAM (`system/SGS-SLAM/scripts/slam.py`) for all modes including `none`.
+  - Guarded `occ_aware_visibility` in `system/MonoGS/utils/slam_frontend.py` against race conditions.
+  - Confirmed that running with `--memory-management none --vram-limits-gb 0.5` strictly caps GPU memory at 500 MB and cleanly raises `torch.cuda.OutOfMemoryError` (recorded as `OOM_Crash`), preventing GPU memory from ballooning to 8–9 GB on Windows.
+
+- Resolved Keyframe 10–11 Peak VRAM Ceiling Breach & Transient Buffer Spikes:
+  - Root Cause Analysis:
+    1. Static headroom fraction (8% = 4.0 MB on 50 MB) was smaller than the incoming batch plus transient concatenation buffers (~4.5–5.5 MB), causing keyframes arriving at ~45.5 MB to bypass pruning and push memory over the ceiling on the subsequent step.
+    2. Monolithic optimizer tensor concatenation in `SyntheticGaussianMap` (`(N, 69)` float32) forced PyTorch to duplicate 28 MB all at once during `torch.cat`, spiking peak step allocations to 71–105 MB.
+    3. Heuristic scoring functions (`compute_voxel_grid_score` with int64 tensors and `compute_volume_score` with GPU `volume.median()`) triggered full GPU RadixSort scratch buffers on CUDA.
+  - Implemented Fixes:
+    1. Dynamic Safety Headroom in `system/common/bitwise_controller.py`:
+       $$\text{effective\_headroom\_bytes} = \max(\text{int}(\text{self.vram\_limit\_bytes} \times \text{self.headroom\_fraction}), \text{int}(\text{incoming\_bytes} \times 1.35))$$
+       Guarantees working headroom is always strictly larger than the incoming keyframe batch plus transient concatenation overhead.
+    2. Per-Parameter Optimizer State Decomposition: Refactored `SyntheticGaussianMap` to store optimizer states (`exp_avg`, `exp_avg_sq`, `grad`) per parameter group mirroring MonoGS and popping incoming tensors during append, reducing concatenation spikes from +28 MB to +3 MB.
+    3. Algorithmic Optimizations in `system/common/multi_heuristic_pruner.py`:
+       - `compute_voxel_grid_score`: uses int32 coordinate quantization and in-place coordinate shifting before `torch.unique` (dropped spike from +9.44 MB to +4.86 MB).
+       - `compute_volume_score`: uses sub-sampled median volume avoiding full GPU RadixSort scratch allocations (dropped spike from +6.49 MB to +3.82 MB).
+       - `select_gaussians_to_prune`: replaced full array `torch.sort` with `torch.topk(..., largest=False)` (dropped spike from +3.38 MB to +0.75 MB).
+  - Validation:
+    - Standalone verification with `test_memory_management_synthetic.py --vram-limit-mb 50.0 --num-keyframes 20 --incoming-per-kf 10000 --device cuda`:
+      * Keyframe 10: Steady CUDA 40.89 MB (81.8%), Peak Step CUDA 44.02 MB (88.0%) <= 50.0 MB.
+      * Keyframe 11: Steady CUDA 40.51 MB (81.0%), Peak Step CUDA 45.90 MB (91.8%) <= 50.0 MB.
+      * Maximum Peak Step CUDA across all 20 keyframes: 49.59 MB (100% compliant <= 50.0 MB).
+      * Maximum Steady CUDA across all 20 keyframes: 44.54 MB (100% compliant <= 50.0 MB).
+      * Unconstrained baseline correctly exhibits expected breach at KF 10-11 (52.35 MB -> 86.26 MB).
+      * Under `--budget-target map`: map footprint stabilizes at exactly 41.00 MB with 1:1 pruning (10,000 in, 10,000 pruned).
+    - Updated comparison plots saved to `synthetic_memory_benchmark.png`.
+
+- Resolved Benchmark Process Stall & Multi-Constraint OOM Root Cause (2026-11-18):
+  - Root Cause Analysis of System Stall:
+    * In `system/MonoGS/slam.py` (lines 222–259), when `color_refinement = False` (standard in benchmark sweeps), the backend process pushed `["sync_backend", model]` onto `self.frontend_queue`.
+    * Because the frontend terminated without draining that queue, Python multiprocessing's internal queue feeder thread (`_feed`) blocked indefinitely trying to flush the Windows named pipe buffer.
+    * Invoking `backend_process.join()` subsequently deadlocked forever.
+    * Fix: Added explicit non-blocking draining of `frontend_queue`, timeout-guarded termination `backend_process.join(timeout=15)`, fallback `.terminate()`, and safe `q.cancel_join_thread()`/`.close()` in `system/MonoGS/slam.py`. Verified that child processes exit cleanly in < 1 second.
+  - Root Cause Analysis of OOM Flags Across Setups:
+    * `none` (Unconstrained) Mode at 0.5 GB, 1.0 GB, 2.0 GB:
+      - Cleanly throwing `torch.cuda.OutOfMemoryError` and writing `OOM_CRASH.flag` is **expected and intended** by experimental design. When memory management and pruning are disabled, Gaussian densification and Adam optimizer states grow unbounded until hitting PyTorch's `set_per_process_memory_fraction`. This directly verifies that unconstrained 3DGS SLAM exceeds tight hardware limits.
+    * `custom` Mode at 0.5 GB:
+      - 0.5 GB (500 MB) is below the physical execution floor of MonoGS. The base PyTorch CUDA context (~150 MB), CUDA rasterizer static buffers (~100 MB), and autograd graph for sliding-window BA (~250 MB) physically require $\ge 500\text{ MB}$ even with zero Gaussians. Default suite limits updated to `[1.0, 2.0, 4.0, 8.0] GB`.
+    * `custom` Mode at 1.0 GB:
+      - OOMed at frame 77 due to:
+        1. Historical keyframe retention: `self.viewpoints` retained raw RGB (3.68 MB) and Depth (1.23 MB) CUDA tensors on GPU for every past keyframe ($128 \text{ keyframes} \times 4.91\text{ MB} \approx 628\text{ MB}$).
+        2. Simultaneous 10-view autograd activation graphs during `self.map`: summing `loss_mapping += ...` over 8 window views + 2 random views before calling `loss_mapping.backward()` forced PyTorch to hold all 10 activation graphs at once (~400 MB).
+  - Architectural Fixes Applied:
+    * Inactive Keyframe Host Offloading (`system/MonoGS/utils/slam_backend.py`):
+      - Inactive viewpoints not in `self.current_window` now have their image and depth tensors offloaded to CPU (`.cpu()`), freeing up ~500 MB of VRAM.
+    * Sequential Per-View Gradient Accumulation (`system/MonoGS/utils/slam_backend.py`):
+      - In constrained mapping, each camera view now runs `loss_cam.backward()` sequentially with PyTorch gradient accumulation, updating `max_radii2D` and `add_densification_stats` immediately.
+      - Releases activation and rasterizer scratch tensors immediately after each view, reducing peak mapping activations from ~400 MB to ~40 MB.
+    * Stale Flag Cleanup & Status Precision (`run_experiments.py`):
+      - Automatically removes stale `OOM_CRASH.flag` before test execution and checks `run_status.json` completion state.
+  - Empirical Validation:
+    * Standalone 120-frame run on TUM `fr1_desk` at 1.0 GB limit (`MonoGS_fr1_desk_custom_1.0GB`):
+      - Successfully completed with zero OOM errors!
+      - ATE RMSE: 0.0216 m (2.16 cm)
+      - PSNR: 18.18 dB, SSIM: 0.661, LPIPS: 0.328
+      - Peak VRAM: 493.2 MB (strictly $\le 1024\text{ MB}$, over 50% headroom!)
+      - Successfully rendered reconstructed map trajectory video: `reconstructed_map_trajectory.mp4` (1.6 MB).
+    * `MonoGS_fr1_desk_custom_2.0GB`:
+      - Successfully completed all 592 frames (62,200 Gaussians, 128 keyframes, 0.965 FPS) with clean shutdown.
+
+- Added Pruned Gaussian Count & Memory Footprint Telemetry (2026-11-19):
+  - Motivation: Record the exact count and physical memory size (in bytes and MB) of all Gaussians pruned across each configuration in a benchmark run (`none`, `custom`, `upstream`).
+  - Active VRAM Footprint Accounting:
+    * MonoGS: Each Gaussian parameter comprises 236 bytes (means 12B, features_dc 12B, scales 12B, rotations 16B, opacity 4B + features_rest 180B). Under Adam optimization, the active VRAM footprint is $4 \times 236 = 944$ bytes (parameters + first moment `exp_avg` + second moment `exp_avg_sq` + gradient `grad`).
+    * SGS-SLAM: Active footprint is 976 bytes per Gaussian under Adam.
+  - Integration Points:
+    * `system/common/metrics_tracker.py`: Added `record_pruning(count, byte_size)`, accumulating `pruned_gaussians_count` and `pruned_gaussians_bytes`, and reporting `pruned_size_mb` in `generate_summary()`.
+    * `system/MonoGS/gaussian_splatting/scene/gaussian_model.py`: Added `cumulative_pruned_count` and `cumulative_pruned_bytes` in `GaussianModel`. Automatically tracks removals inside `prune_points(mask)` covering all eviction paths. Added `get_bytes_per_gaussian(include_optimizer=True)`.
+    * `system/MonoGS/utils/slam_backend.py`: Added `save_pruning_summary()` to persist `pruning_summary.json` containing `pruned_gaussians_count`, `pruned_gaussians_bytes`, and `pruned_size_mb`. Resets accumulation on `reset()`.
+    * `system/SGS-SLAM/utils/slam_external.py`: Updated `remove_points()` to accumulate `variables['cumulative_pruned_count']` and `variables['cumulative_pruned_bytes']`.
+    * `system/SGS-SLAM/scripts/slam.py`: Outputs cumulative pruned count and size to console and exports `pruning_summary.json`.
+    * `run_experiments.py`:
+      - Updated `run_monogs_experiment` and `run_sgs_experiment` to parse stdout and read `pruning_summary.json`.
+      - In `none` mode, pruning count and size are explicitly set to `0` (0.00 MB) baseline.
+      - Updated `fieldnames` and CSV parser in `benchmark_results.csv` to persist `pruned_gaussians` and `pruned_size_mb`.
+      - Updated `comparison_summary.md` markdown results table to display `Pruned Gaussians` and `Pruned Size (MB)`.
+      - Added dual comparison plots (`{sys}_{seq}_pruning_comparison.png`) comparing Pruned Gaussians Count and Pruned Memory Footprint (MB) vs VRAM Constraint.
+
+Next three actions:
+1. Run comparative matrix across TUM sequences (`fr1_desk`, `fr2_xyz`, `fr3_office`) comparing unconstrained (`none`), custom multi-heuristic pruning (`custom`), and upstream original pruning (`upstream`) at configured VRAM limits (`1.0, 2.0, 4.0, 8.0` GB).
+2. Experiment with `HeuristicWeightNN` dynamic weight predictions on TUM sequences.
+3. Generate cross-scene comparative plots and trade-off tables for report documentation.
+

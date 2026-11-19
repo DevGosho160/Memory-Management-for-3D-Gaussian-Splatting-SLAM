@@ -8,7 +8,7 @@ import torch
 import torch.multiprocessing as mp
 
 # Import SLAM and config utilities
-sys.path.append(os.path.join(os.path.dirname(__file__), 'MonoGS_System', 'MonoGS'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'system', 'MonoGS'))
 from slam import SLAM
 from utils.config_utils import load_config
 from utils.eval_utils import eval_ate
